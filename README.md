@@ -1,0 +1,136 @@
+# PromptPilot
+
+PromptPilot 是一个 Chrome / Edge Manifest V3 浏览器插件，用于把网页图片反推成适合 AI 作图工具使用的提示词，并支持继续调用图像生成接口出图。
+
+## 核心功能
+
+- 在网页图片上右键，点击「图片转提示词」
+- 自动打开插件浮动窗口并展示当前图片
+- 调用 Prompt API 反推中文 Prompt、英文 Prompt 和 tags
+- 保留内置反推模板，同时支持在设置页追加自定义补充提示词
+- 调用 Image API 生成图片，支持单张下载和全部下载
+- 支持历史记录、本地草稿、一键恢复、导出和导入
+- 顶部显示 Prompt API / Image API 连接状态
+- 提供调试日志、错误卡片和 API 调用记录
+
+## 技术栈
+
+- Chrome Manifest V3
+- 原生 HTML / CSS / JavaScript
+- 不依赖 React、Vite、Webpack
+- 使用 `chrome.storage.local` 保存设置、草稿和历史
+- 使用 `chrome.contextMenus` 处理图片右键菜单
+- 使用 `chrome.downloads` 下载生成结果
+
+## 已支持的接口
+
+### Prompt / Vision
+
+- OpenAI-compatible Chat / Vision
+- DIY Custom Prompt API
+- Mock fallback
+
+### Image Generation
+
+- OpenAI-compatible Image API
+- DIY Custom Image API
+- Mock fallback，未配置真实 API 时仍可生成 4 张占位图跑通流程
+
+## 安装方式
+
+1. 打开 Chrome 或 Edge
+2. 进入 `chrome://extensions`
+3. 打开「开发者模式」
+4. 点击「加载已解压的扩展程序」
+5. 选择项目里的 `extension/` 目录
+6. 在网页图片上右键，选择「图片转提示词」
+
+## 使用流程
+
+1. 右键网页图片，选择「图片转提示词」
+2. 在 PromptPilot 窗口中确认图片预览
+3. 可选填写「额外要求」
+4. 点击「反推」
+5. 查看并编辑中文 Prompt、英文 Prompt 和 tags
+6. 点击「生成图片」或「混合生成 4 张」
+7. 下载单张结果或下载全部结果
+8. 可在「历史」中恢复之前的图片、Prompt 和生成结果
+
+## 设置说明
+
+### Prompt API
+
+在设置页填写 Base URL、Endpoint、API Key、Model、Temperature、Max Tokens 和自定义补充提示词。
+
+「自定义补充提示词」不会替换内置反推模板，只会追加到内置模板后面，适合放长期偏好，例如：
+
+```text
+强化主体、场景、构图、镜头、光影、色彩、材质和细节描述。
+输出更适合 AI 绘图模型使用的完整文生图 Prompt。
+避免出现品牌名、水印、版权角色名称。
+```
+
+### Image API
+
+在设置页填写 Base URL、Endpoint、API Key、Model、Response Format 和输出尺寸模式。
+
+输出尺寸模式：
+
+- 跟随参考图：根据参考图横竖自动选择 `16:9`、`9:16` 或 `1:1`
+- 比例预设：手动选择 `1:1`、`4:3`、`3:4`、`16:9`、`9:16`
+- 自定义尺寸：手动输入宽高
+
+## 历史与本地存储
+
+插件只使用本地存储，不做账号系统和云同步。
+
+主要 storage key：
+
+- `settings`：插件设置
+- `pendingImage`：右键图片后的待处理图片
+- `promptpilotDraft`：当前工作草稿
+- `promptpilotHistory`：历史记录
+
+历史记录支持保存、搜索、筛选、恢复、删除、清空、导出和导入 JSON。
+
+## 调试
+
+插件内置调试面板，可以查看最近一次 API 调用、当前状态摘要、请求 / 响应日志、错误信息、Provider、Endpoint、耗时和 HTTP 状态码。
+
+敏感信息会脱敏：
+
+- API Key 只显示前 4 位和后 4 位
+- Authorization header 会被隐藏
+- Base64 图片数据会被截断
+
+## 目录结构
+
+```text
+image-prompt-extension/
+├─ docs/
+├─ extension/
+│  ├─ manifest.json
+│  ├─ assets/
+│  └─ src/
+│     ├─ background.js
+│     ├─ contentScript.js
+│     ├─ constants.js
+│     ├─ adapters/
+│     ├─ data/
+│     ├─ options/
+│     ├─ services/
+│     ├─ sidepanel/
+│     └─ utils/
+└─ README.md
+```
+
+## 当前状态
+
+项目处于 MVP 开发阶段，核心流程已经跑通：图片右键进入插件、Prompt 反推、自定义补充提示词、图片生成闭环、下载、历史记录、草稿恢复、API 状态器和调试日志。
+
+## 隐私说明
+
+- 插件不上传设置到云端
+- 历史记录默认保存在本机浏览器 `chrome.storage.local`
+- 导出历史不会包含 API Key
+- 真实 API 请求只会发送到用户在设置页配置的接口地址
