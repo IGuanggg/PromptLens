@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PromptPilot 设置</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <main class="settings-shell">
+    <header class="settings-header">
+      <h1>PromptPilot 设置</h1>
+      <p>配置 Prompt API 与图像生成 API。</p>
+    </header>
+
+    <div class="settings-layout">
+      <nav class="tabs">
+        <button class="tab active" data-tab="prompt">Prompt API</button>
+        <button class="tab" data-tab="image">Image API</button>
+        <button class="tab" data-tab="storage">历史与存储</button>
+        <button class="tab" data-tab="advanced">高级调试</button>
+      </nav>
+
+      <section class="panel">
+        <form id="settingsForm">
+
+          <!-- ═══ Prompt API ═══ -->
+          <section class="tab-panel" data-panel="prompt">
+            <h2>Prompt API 接口配置</h2>
+
+            <label>接口类型
+              <select name="promptApi.type" id="promptApiType">
+                <option value="openai-compatible">OpenAI-compatible</option>
+                <option value="custom-prompt">自定义 Prompt API</option>
+              </select>
+            </label>
+
+            <div class="form-grid">
+              <label>Base URL<input name="promptApi.baseUrl" placeholder="https://api.openai.com" /></label>
+              <label>Endpoint<input name="promptApi.endpoint" placeholder="/v1/chat/completions" /></label>
+              <label>API Key<input name="promptApi.apiKey" type="password" /></label>
+              <label>Model<input name="promptApi.model" placeholder="gpt-4.1-mini" /></label>
+            </div>
+
+            <p class="hint-text">图片反推需要使用<b>支持视觉输入的模型</b>（如 gpt-4o、gpt-4.1-mini、qwen-vl-max 等）。如果使用纯文本模型，图片内容将无法被识别，可能返回不相关的结果。</p>
+
+            <h3>反推提示词</h3>
+            <label>自定义补充提示词
+              <textarea name="promptApi.customInstruction" rows="6" placeholder="可选。例如：优先输出适合 Midjourney 的摄影语言；强化材质、光影、镜头和构图描述；避免出现品牌名。"></textarea>
+            </label>
+            <p class="hint-text">这里的内容只会追加到内置反推提示词后面，不会替换或修改原来的内置反推模板。</p>
+
+            <h3>参数</h3>
+            <div class="form-grid">
+              <label>Temperature<input name="promptApi.temperature" type="number" step="0.1" /></label>
+              <label>Max Tokens<input name="promptApi.maxTokens" type="number" /></label>
+            </div>
+
+            <!-- Custom Prompt fields -->
+            <div id="customPromptFields" class="custom-fields hidden">
+              <h3>自定义请求配置</h3>
+              <div class="form-grid">
+                <label>Method<select name="promptApi.custom.method"><option value="POST">POST</option><option value="GET">GET</option></select></label>
+                <label>Auth Type<select name="promptApi.custom.authType"><option value="bearer">bearer</option><option value="x-api-key">x-api-key</option><option value="query-key">query-key</option><option value="custom-header">custom-header</option><option value="none">none</option></select></label>
+                <label>Query Key Name<input name="promptApi.custom.queryKeyName" placeholder="api_key" /></label>
+                <label>Custom Header Name<input name="promptApi.custom.customHeaderName" placeholder="X-API-Key" /></label>
+              </div>
+              <label>Request Template<textarea name="promptApi.custom.requestTemplate" rows="6"></textarea></label>
+              <h3>Response Map</h3>
+              <div class="form-grid">
+                <label>Map tags (dot-path)<input name="promptApi.custom.responseMap.tags" placeholder="tags" /></label>
+                <label>Map zh (dot-path)<input name="promptApi.custom.responseMap.zh" placeholder="zh" /></label>
+                <label>Map en (dot-path)<input name="promptApi.custom.responseMap.en" placeholder="en" /></label>
+              </div>
+            </div>
+
+            <div class="form-actions">
+              <button id="testPromptTextBtn" class="secondary-btn" type="button">测试文本接口</button>
+              <button id="testPromptVisionBtn" class="secondary-btn" type="button">测试图片接口</button>
+              <span id="testPromptResult" class="test-result"></span>
+            </div>
+          </section>
+
+          <!-- ═══ Image API ═══ -->
+          <section class="tab-panel hidden" data-panel="image">
+            <h2>Image API 接口配置</h2>
+
+            <label>接口类型
+              <select name="imageApi.type" id="imageApiType">
+                <option value="openai-compatible-image">OpenAI-compatible Image</option>
+                <option value="custom-image">自定义图像 API</option>
+              </select>
+            </label>
+
+            <div class="form-grid">
+              <label>Base URL<input name="imageApi.baseUrl" placeholder="https://api.openai.com" /></label>
+              <label>Endpoint<input name="imageApi.endpoint" placeholder="/v1/images/generations" /></label>
+              <label>API Key<input name="imageApi.apiKey" type="password" /></label>
+              <label>Model<input name="imageApi.model" placeholder="gpt-image-1" /></label>
+            </div>
+
+            <h3>参数</h3>
+            <div class="form-grid">
+              <label>Response Format<select name="imageApi.responseFormat"><option value="url">url</option><option value="b64_json">b64_json</option></select></label>
+            </div>
+
+            <!-- Output Size Control -->
+            <h3>输出尺寸配置</h3>
+            <div class="size-control">
+              <label>尺寸模式
+                <select id="sizeMode" data-path="imageApi.sizeMode">
+                  <option value="auto">跟随参考图</option>
+                  <option value="preset">比例预设</option>
+                  <option value="custom">自定义尺寸</option>
+                </select>
+              </label>
+
+              <div id="sizePresetGroup" class="size-preset-group hidden">
+                <div class="ratio-buttons" id="ratioButtons">
+                  <button type="button" data-ratio="1:1" class="ratio-btn active">1:1</button>
+                  <button type="button" data-ratio="4:3" class="ratio-btn">4:3</button>
+                  <button type="button" data-ratio="3:4" class="ratio-btn">3:4</button>
+                  <button type="button" data-ratio="16:9" class="ratio-btn">16:9</button>
+                  <button type="button" data-ratio="9:16" class="ratio-btn">9:16</button>
+                </div>
+                <label>清晰度
+                  <select id="qualityPreset" data-path="imageApi.quality">
+                    <option value="standard">标准 (1024px)</option>
+                    <option value="hd">高清 (1536px+)</option>
+                    <option value="ultra">超清 (2048px+)</option>
+                  </select>
+                </label>
+              </div>
+
+              <div id="sizeCustomGroup" class="size-custom-group hidden">
+                <div class="form-grid">
+                  <label>宽度 px<input id="customWidth" type="number" min="16" step="16" value="1024" data-path="imageApi.customWidth" /></label>
+                  <label>高度 px<input id="customHeight" type="number" min="16" step="16" value="1024" data-path="imageApi.customHeight" /></label>
+                </div>
+                <p class="hint-text">宽度和高度必须 ≥ 16，为 16 的倍数，长宽比不超过 3:1。</p>
+              </div>
+
+              <div class="final-size" id="finalSizeLabel">
+                最终尺寸: 1024 × 1024
+              </div>
+            </div>
+
+            <!-- Custom Image fields -->
+            <div id="customImageFields" class="custom-fields hidden">
+              <h3>自定义请求配置</h3>
+              <div class="form-grid">
+                <label>Method<select name="imageApi.custom.method"><option value="POST">POST</option><option value="GET">GET</option></select></label>
+                <label>Auth Type<select name="imageApi.custom.authType"><option value="bearer">bearer</option><option value="x-api-key">x-api-key</option><option value="query-key">query-key</option><option value="custom-header">custom-header</option><option value="none">none</option></select></label>
+                <label>Request Mode<select name="imageApi.custom.requestMode"><option value="sync">sync</option><option value="async">async</option></select></label>
+                <label>Query Key Name<input name="imageApi.custom.queryKeyName" placeholder="api_key" /></label>
+                <label>Custom Header Name<input name="imageApi.custom.customHeaderName" placeholder="X-API-Key" /></label>
+              </div>
+              <label>Request Template<textarea name="imageApi.custom.requestTemplate" rows="6"></textarea></label>
+              <label>Status Endpoint (async only)<input name="imageApi.custom.statusEndpoint" placeholder="/v1/tasks/{{taskId}}" /></label>
+              <h3>Response Map</h3>
+              <div class="form-grid">
+                <label>Map images (dot-path)<input name="imageApi.custom.responseMap.images" placeholder="data" /></label>
+                <label>Map imageUrl (dot-path)<input name="imageApi.custom.responseMap.imageUrl" placeholder="url" /></label>
+                <label>Map taskId (dot-path)<input name="imageApi.custom.responseMap.taskId" placeholder="id" /></label>
+                <label>Map status (dot-path)<input name="imageApi.custom.responseMap.status" placeholder="status" /></label>
+              </div>
+            </div>
+
+            <div class="form-actions">
+              <label class="switch-row"><input id="realImageTest" type="checkbox" /> 真实测试出图（将消耗 API 额度）</label>
+              <button id="testImageBtn" class="secondary-btn" type="button">测试 Image API</button>
+              <span id="testImageResult" class="test-result"></span>
+            </div>
+          </section>
+
+          <!-- ═══ 历史与存储 ═══ -->
+          <section class="tab-panel hidden" data-panel="storage">
+            <h2>历史与存储</h2>
+            <label class="switch-row"><input name="storage.enableHistory" type="checkbox" /> 保存历史</label>
+            <label class="switch-row"><input name="storage.savePromptWithImage" type="checkbox" /> 保存图片对应 Prompt</label>
+            <label class="switch-row"><input name="storage.saveResults" type="checkbox" /> 保存生成结果</label>
+            <label class="switch-row"><input name="storage.autoSaveDraft" type="checkbox" /> 自动保存草稿</label>
+            <label>历史数量上限<input name="storage.historyLimit" type="number" /></label>
+            <div class="storage-actions">
+              <button id="clearHistoryOptionsBtn" class="secondary-btn" type="button">清空历史</button>
+              <button id="exportHistoryOptionsBtn" class="secondary-btn" type="button">导出历史 JSON</button>
+              <button id="importHistoryOptionsBtn" class="secondary-btn" type="button">导入历史 JSON</button>
+              <button id="clearDraftOptionsBtn" class="secondary-btn" type="button">清空草稿</button>
+              <input id="historyImportFile" type="file" accept="application/json" hidden />
+            </div>
+          </section>
+
+          <!-- ═══ 高级调试 ═══ -->
+          <section class="tab-panel hidden" data-panel="advanced">
+            <h2>高级调试</h2>
+
+            <h3>调试模式</h3>
+            <label class="switch-row"><input name="advanced.enableDebugMode" type="checkbox" /> 启用调试模式（控制台输出）</label>
+            <label class="switch-row"><input name="advanced.saveDebugLogs" type="checkbox" /> 保存调试日志到存储</label>
+            <label>日志数量上限<input name="advanced.debugLogLimit" type="number" min="50" max="2000" /></label>
+
+            <h3>日志控制</h3>
+            <label class="switch-row"><input name="advanced.logRequestBody" type="checkbox" /> 记录请求体内容</label>
+            <label class="switch-row"><input name="advanced.logResponseBody" type="checkbox" /> 记录响应体内容</label>
+
+            <h3>调试日志管理</h3>
+            <div class="storage-actions">
+              <button id="exportDebugLogsBtn" class="secondary-btn" type="button">导出日志 JSON</button>
+              <button id="clearDebugLogsBtn" class="secondary-btn" type="button">清空日志</button>
+            </div>
+
+            <h3>最近一次 API 调用</h3>
+            <div id="lastCallDisplay" class="last-call-display">
+              <span class="muted">暂无调用记录</span>
+            </div>
+          </section>
+
+        </form>
+      </section>
+    </div>
+
+    <footer class="footer-actions">
+      <button id="saveBtn" class="primary-btn">保存设置</button>
+      <button id="resetBtn" class="secondary-btn">恢复默认</button>
+      <button id="exportBtn" class="secondary-btn">导出设置</button>
+      <button id="importBtn" class="secondary-btn">导入设置</button>
+      <input id="importFile" type="file" accept="application/json" hidden />
+      <span id="saveStatus"></span>
+    </footer>
+  </main>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

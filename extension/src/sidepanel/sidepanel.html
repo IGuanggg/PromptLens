@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PromptPilot</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+
+    <main class="app-shell">
+      <header class="app-header">
+        <div>
+          <div class="brand-row">
+            <div class="brand-dot"></div>
+            <h1>PromptPilot</h1>
+          </div>
+          <p>智能图像提示词助手</p>
+        </div>
+        <div class="header-side">
+          <div class="status-strip">
+            <div id="promptStatusBadge" class="status-badge muted"><span></span>Prompt API 未配置</div>
+            <div id="imageStatusBadge" class="status-badge muted"><span></span>Image API 未配置</div>
+            <div id="lastCallBadge" class="status-badge muted hidden"><span></span></div>
+          </div>
+          <div class="header-actions">
+            <button id="openDebugBtn" class="icon-btn" title="调试日志">调试</button>
+            <button id="openHistoryBtn" class="icon-btn" title="历史记录">历史</button>
+            <button id="refreshStatusBtn" class="icon-btn" title="刷新状态">↻</button>
+            <button id="openOptionsBtn" class="icon-btn" title="设置">⚙</button>
+          </div>
+        </div>
+      </header>
+
+      <!-- ── 当前图片卡片 ── -->
+      <section class="card" id="imageCard">
+        <div class="card-title-row">
+          <h2>当前图片</h2>
+        </div>
+
+        <div id="imageEmptyState" class="empty-state">
+          <div class="empty-icon">🖼</div>
+          <p>暂无图片</p>
+          <span>你可以在网页图片上右键选择"图片转提示词"，也可以上传、拖拽或粘贴图片。</span>
+        </div>
+
+        <div id="imageDropHint" class="drop-hint hidden">松开即可导入图片</div>
+
+        <div id="imagePreviewWrap" class="image-preview-wrap hidden">
+          <img id="imagePreview" alt="当前图片" />
+        </div>
+
+        <div id="imageErrorPlaceholder" class="image-error-placeholder hidden">
+          <div class="empty-icon">⚠️</div>
+          <p>图片加载失败</p>
+          <span>当前图片可能开启防盗链，请尝试截图后粘贴，或保存图片后上传。</span>
+        </div>
+
+        <div id="imageWarning" class="image-warning hidden"></div>
+
+        <label class="field-label" for="extraInstruction">
+          额外要求
+          <textarea id="extraInstruction" class="small-textarea" placeholder="可选，例如：更偏电商详情页风格、增加特效元素"></textarea>
+        </label>
+
+        <input type="file" id="fileInput" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden" />
+
+        <div class="button-row">
+          <button id="reverseBtn" class="primary-btn" disabled>反推</button>
+          <button id="uploadBtn" class="secondary-btn">上传图片</button>
+          <button id="pasteBtn" class="secondary-btn">粘贴图片</button>
+          <button id="clearBtn" class="secondary-btn">清空</button>
+        </div>
+      </section>
+
+      <!-- ── 提示词结果卡片 ── -->
+      <section class="card">
+        <div class="card-title-row">
+          <h2>提示词结果</h2>
+          <small id="promptProviderText">Mock</small>
+        </div>
+        <div id="tagsWrap" class="tags-wrap"></div>
+
+        <label class="field-label" for="promptZh">中文提示词</label>
+        <textarea id="promptZh" class="prompt-textarea" placeholder="反推后显示中文提示词，可手动编辑"></textarea>
+
+        <label class="field-label" for="promptEn">English Prompt</label>
+        <textarea id="promptEn" class="prompt-textarea" placeholder="Reverse prompt will appear here. You can edit it."></textarea>
+
+        <label class="field-label" for="userExtraPrompt">自定义补充提示词</label>
+        <textarea id="userExtraPrompt" class="small-textarea" placeholder="可填写画面细节、风格、补充描述等..."></textarea>
+
+        <div class="optimize-actions">
+          <button id="optimizeZhBtn" class="secondary-btn" disabled>优化中文</button>
+          <button id="optimizeEnBtn" class="secondary-btn" disabled>优化英文</button>
+        </div>
+
+        <div class="prompt-actions">
+          <button id="copyZhBtn" class="secondary-btn">复制中文</button>
+          <button id="copyEnBtn" class="secondary-btn">复制英文</button>
+          <button id="saveHistoryBtn" class="secondary-btn">保存历史</button>
+          <button id="generateBtn" class="primary-btn" disabled>生成图片</button>
+          <button id="generateMixedBtn" class="secondary-btn" disabled>混合生成4张</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-title-row">
+          <h2>生成结果</h2>
+        </div>
+        <section id="errorCard" class="error-card hidden" aria-label="错误信息">
+          <div class="error-card-title">
+            <strong id="errorCodeText">UNKNOWN_ERROR</strong>
+            <span id="errorRetryableText">不可重试</span>
+          </div>
+          <p id="errorMessageText"></p>
+          <div class="error-meta">
+            <span id="errorProviderText">Provider: -</span>
+            <span id="errorStatusText">HTTP: -</span>
+          </div>
+          <div class="error-actions">
+            <button id="copyErrorBtn" class="secondary-btn">复制错误日志</button>
+            <button id="viewLogsFromErrorBtn" class="secondary-btn">查看日志</button>
+            <button id="retryGenerateBtn" class="secondary-btn">重新生成</button>
+            <button id="errorOptionsBtn" class="secondary-btn">打开设置</button>
+          </div>
+        </section>
+        <p class="result-summary">当前图片将作为参考图生成。混合生成 4 张：第 1 张源参考，第 2 张风格变体，第 3 张偏结构，第 4 张偏线稿。</p>
+        <div id="resultsGrid" class="results-grid"></div>
+        <div class="result-footer">
+          <button id="downloadAllBtn" class="secondary-btn" disabled>下载全部</button>
+          <button id="regenerateBtn" class="secondary-btn" disabled>重新生成</button>
+        </div>
+      </section>
+
+      <footer id="taskStatus" class="task-status">状态：等待右键发送图片</footer>
+    </main>
+
+  <!-- ── History Modal ── -->
+  <section id="historyModal" class="modal hidden" aria-label="历史记录">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h2>历史记录</h2>
+        <button id="closeHistoryBtn" class="icon-btn" title="关闭">×</button>
+      </div>
+      <div class="history-toolbar">
+        <input id="historySearch" type="search" placeholder="搜索 Prompt、tags、页面标题" />
+        <select id="historyFilter">
+          <option value="all">全部</option>
+          <option value="prompt-only">只有反推</option>
+          <option value="with-results">有生成结果</option>
+          <option value="with-error">出错记录</option>
+        </select>
+      </div>
+      <div id="historyList" class="history-list"></div>
+      <div class="history-footer">
+        <button id="exportHistoryBtn" class="secondary-btn">导出历史 JSON</button>
+        <button id="clearHistoryBtn" class="secondary-btn danger-btn">清空历史</button>
+      </div>
+    </div>
+  </section>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <!-- ── Debug Drawer ── -->
+  <section id="debugDrawer" class="debug-drawer hidden" aria-label="调试面板">
+    <div class="debug-header">
+      <h2>调试日志</h2>
+      <div class="debug-header-actions">
+        <button id="refreshDebugBtn" class="secondary-btn">刷新</button>
+        <button id="clearDebugBtn" class="secondary-btn">清空</button>
+        <button id="exportDebugBtn" class="secondary-btn">导出 JSON</button>
+        <button id="closeDebugBtn" class="icon-btn" title="关闭">×</button>
+      </div>
+    </div>
+
+    <div class="debug-section">
+      <h3>最近一次调用</h3>
+      <div id="debugLastCall" class="debug-last-call"><span class="muted">暂无调用</span></div>
+    </div>
+
+    <div class="debug-section">
+      <h3>状态摘要</h3>
+      <div id="debugStateGrid" class="debug-state-grid"></div>
+    </div>
+
+    <div class="debug-toolbar">
+      <select id="debugLevelFilter">
+        <option value="all">全部级别</option>
+        <option value="info">info</option>
+        <option value="warn">warn</option>
+        <option value="error">error</option>
+      </select>
+      <select id="debugApiTypeFilter">
+        <option value="all">全部类型</option>
+        <option value="prompt">prompt</option>
+        <option value="image">image</option>
+        <option value="system">system</option>
+      </select>
+      <input id="debugSearchInput" type="search" placeholder="搜索..." />
+    </div>
+
+    <div id="debugLogList" class="debug-log-list"></div>
+    <div id="debugLogDetail" class="debug-log-detail hidden">
+      <pre id="debugLogDetailPre"></pre>
+    </div>
+  </section>
+
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>

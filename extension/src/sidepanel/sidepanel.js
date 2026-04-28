@@ -1,0 +1,868 @@
+import { loadSettings } from '../services/storageService.js';
+import { checkPromptApiStatus, checkImageApiStatus } from '../adapters/status/healthCheck.js';
+import { generatePromptFromImage, enhancePrompt } from '../services/promptService.js';
+import { generateImages } from '../services/imageService.js';
+import { downloadImage, downloadAllImages } from '../services/downloadService.js';
+import { clearDraft, restoreDraft, saveDraft } from '../services/draftService.js';
+import { clearHistory, createHistoryExportFilename, createHistoryItemFromState, deleteHistoryItem, exportHistory, getHistory, importHistory, saveHistoryItem } from '../services/historyService.js';
+import { getLogs, clearLogs, getLastCall, initLogService, setLogSettings, setLogLimit } from '../services/logService.js';
+import { computeOutputSize } from '../utils/imageSize.js';
+import { statusText } from '../utils/format.js';
+import { ERROR_CODES, getErrorMessage, normalizeError, sanitizeErrorLog } from '../utils/errors.js';
+import { formatDateTime } from '../utils/date.js';
+import { ALLOWED_IMAGE_TYPES } from '../utils/fileSize.js';
+import { normalizeImageInput, handleLocalFile, handleDropFile, handlePasteEvent } from '../services/imageInputService.js';
+
+const state = {
+  currentImage: null,
+  apiStatus: {
+    prompt: { status: 'unconfigured', message: 'Prompt API 未配置' },
+    image: { status: 'unconfigured', message: 'Image API 未配置' }
+  },
+  prompts: createEmptyPrompts(),
+  results: [],
+  generateSettings: {},
+  lastError: null,
+  lastGenerateForceMixed: false,
+  settings: null,
+  taskStatus: { phase: 'waiting-image', message: '等待右键发送图片' },
+  historyItems: [],
+  historyFilter: 'all',
+  historyQuery: '',
+  extraInstruction: '',
+  userExtraPrompt: '',
+  lastCall: null
+};
+
+const $ = (id) => document.getElementById(id);
+let draftTimer = null;
+
+async function init() {
+  state.settings = await loadSettings();
+  await initLogService(state.settings);
+  setLogSettings(state.settings);
+  setLogLimit(state.settings?.advanced?.debugLogLimit || 200);
+  state.lastCall = await getLastCall();
+
+  bindEvents();
+  bindImageInputEvents();
+  await loadDraft();
+  await loadPendingImage();
+  await refreshApiStatus();
+  renderAll();
+}
+
+// ════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════════════════
+// Core events
+// ════════════════════════════════════════════════════════════════
+
+function bindEvents() {
+  $('openOptionsBtn').addEventListener('click', () => chrome.runtime.openOptionsPage());
+  $('refreshStatusBtn').addEventListener('click', refreshApiStatus);
+  $('reverseBtn').addEventListener('click', handleReversePrompt);
+  $('clearBtn').addEventListener('click', clearCurrentImage);
+  $('copyZhBtn').addEventListener('click', () => copyText($('promptZh').value, '已复制中文提示词'));
+  $('copyEnBtn').addEventListener('click', () => copyText($('promptEn').value, '已复制英文提示词'));
+  $('saveHistoryBtn').addEventListener('click', handleManualSaveHistory);
+  $('generateBtn').addEventListener('click', () => handleGenerate(false));
+  $('generateMixedBtn').addEventListener('click', () => handleGenerate(true));
+  $('downloadAllBtn').addEventListener('click', () => handleDownloadAll());
+  $('regenerateBtn').addEventListener('click', () => handleGenerate(state.lastGenerateForceMixed));
+  $('copyErrorBtn').addEventListener('click', handleCopyError);
+  $('viewLogsFromErrorBtn').addEventListener('click', openDebugDrawer);
+  $('retryGenerateBtn').addEventListener('click', () => handleGenerate(state.lastGenerateForceMixed));
+  $('errorOptionsBtn').addEventListener('click', () => chrome.runtime.openOptionsPage());
+  $('openHistoryBtn').addEventListener('click', openHistoryModal);
+  $('closeHistoryBtn').addEventListener('click', closeHistoryModal);
+  $('openDebugBtn').addEventListener('click', openDebugDrawer);
+  $('closeDebugBtn').addEventListener('click', closeDebugDrawer);
+  $('refreshDebugBtn').addEventListener('click', renderDebugLogs);
+  $('clearDebugBtn').addEventListener('click', handleClearDebugLogs);
+  $('exportDebugBtn').addEventListener('click', handleExportDebugLogs);
+  $('debugLevelFilter').addEventListener('change', renderDebugLogs);
+  $('debugApiTypeFilter').addEventListener('change', renderDebugLogs);
+  $('debugSearchInput').addEventListener('input', renderDebugLogs);
+  $('lastCallBadge').addEventListener('click', openDebugDrawer);
+
+  $('historySearch').addEventListener('input', (event) => {
+    state.historyQuery = event.target.value;
+    renderHistoryList();
+  });
+  $('historyFilter').addEventListener('change', (event) => {
+    state.historyFilter = event.target.value;
+    renderHistoryList();
+  });
+  $('clearHistoryBtn').addEventListener('click', handleClearHistory);
+  $('exportHistoryBtn').addEventListener('click', handleExportHistory);
+
+  $('optimizeZhBtn').addEventListener('click', () => handleOptimizePrompt('zh'));
+  $('optimizeEnBtn').addEventListener('click', () => handleOptimizePrompt('en'));
+
+  $('extraInstruction').addEventListener('input', () => {
+    state.extraInstruction = $('extraInstruction').value;
+    queueSaveDraft();
+  });
+
+  $('userExtraPrompt').addEventListener('input', () => {
+    state.userExtraPrompt = $('userExtraPrompt').value;
+    queueSaveDraft();
+  });
+
+  $('promptZh').addEventListener('input', () => { state.prompts.zh = $('promptZh').value; renderButtonStates(); queueSaveDraft(); });
+  $('promptEn').addEventListener('input', () => { state.prompts.en = $('promptEn').value; renderButtonStates(); queueSaveDraft(); });
+
+  $('imagePreview').addEventListener('error', () => {
+    if (state.currentImage && !state.currentImage.dataUrl) {
+      $('imagePreviewWrap').classList.add('hidden');
+      $('imageErrorPlaceholder').classList.remove('hidden');
+    }
+  });
+  $('imagePreview').addEventListener('load', () => {
+    $('imageErrorPlaceholder').classList.add('hidden');
+    if (state.currentImage) {
+      const img = $('imagePreview');
+      const width = img.naturalWidth || 0;
+      const height = img.naturalHeight || 0;
+      if (width && height && (!state.currentImage.width || !state.currentImage.height)) {
+        state.currentImage.width = width;
+        state.currentImage.height = height;
+        state.currentImage.originalWidth = state.currentImage.originalWidth || width;
+        state.currentImage.originalHeight = state.currentImage.originalHeight || height;
+        queueSaveDraft();
+      }
+    }
+  });
+
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message.type === 'IMAGE_SELECTED') importImagePayload(message.payload);
+  });
+
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName === 'local' && changes.settings) refreshApiStatus();
+  });
+}
+
+// ════════════════════════════════════════════════════════════════
+// Image input events (unchanged)
+// ════════════════════════════════════════════════════════════════
+
+function bindImageInputEvents() {
+  $('uploadBtn').addEventListener('click', () => { $('fileInput').click(); });
+  $('fileInput').addEventListener('change', async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      const image = await handleLocalFile(file, 'upload');
+      setCurrentImage(image);
+      setTaskStatus('idle', '图片已导入，请点击反推');
+      renderTaskStatus();
+    } catch (error) { toast(error.message || '导入图片失败'); }
+  });
+
+  $('pasteBtn').addEventListener('click', async () => {
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        for (const type of item.types) {
+          if (ALLOWED_IMAGE_TYPES.has(type)) {
+            const blob = await item.getType(type);
+            const file = new File([blob], 'clipboard.png', { type });
+            const image = await handleLocalFile(file, 'paste');
+            setCurrentImage(image);
+            setTaskStatus('idle', '图片已从剪贴板导入，请点击反推');
+            renderTaskStatus();
+            return;
+          }
+        }
+      }
+      toast('剪贴板中没有图片');
+    } catch (error) { toast('请使用 Ctrl+V 粘贴图片，或授予剪贴板读取权限'); }
+  });
+
+  document.addEventListener('paste', async (event) => {
+    const target = event.target;
+    if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') return;
+    try {
+      const image = await handlePasteEvent(event);
+      setCurrentImage(image);
+      setTaskStatus('idle', '图片已从粘贴导入，请点击反推');
+      renderTaskStatus();
+    } catch (error) {
+      if (error.message?.includes('剪贴板中没有图片')) return;
+      toast(error.message || '粘贴图片失败');
+    }
+  });
+
+  const imageCard = $('imageCard');
+  imageCard.addEventListener('dragover', (event) => {
+    event.preventDefault(); event.stopPropagation();
+    imageCard.classList.add('drag-over');
+    if (!state.currentImage) $('imageEmptyState').classList.add('hidden');
+    $('imageDropHint').classList.remove('hidden');
+    $('imagePreviewWrap').classList.add('hidden');
+  });
+  imageCard.addEventListener('dragleave', (event) => {
+    event.preventDefault(); event.stopPropagation();
+    imageCard.classList.remove('drag-over');
+    $('imageDropHint').classList.add('hidden');
+    if (!state.currentImage) $('imageEmptyState').classList.remove('hidden');
+    else $('imagePreviewWrap').classList.remove('hidden');
+  });
+  imageCard.addEventListener('drop', async (event) => {
+    event.preventDefault(); event.stopPropagation();
+    imageCard.classList.remove('drag-over');
+    $('imageDropHint').classList.add('hidden');
+    const files = event.dataTransfer?.files;
+    if (!files || files.length === 0) { toast('未识别到文件'); return; }
+    if (files.length > 1) { toast('第一版只支持单张图片'); return; }
+    const file = files[0];
+    if (!ALLOWED_IMAGE_TYPES.has(file.type)) { toast('不支持的文件类型'); return; }
+    try {
+      const image = await handleDropFile(file);
+      setCurrentImage(image);
+      setTaskStatus('idle', '图片已导入，请点击反推');
+      renderTaskStatus();
+    } catch (error) { toast(error.message || '导入图片失败'); }
+  });
+}
+
+// ════════════════════════════════════════════════════════════════
+// Pending image / draft loading
+// ════════════════════════════════════════════════════════════════
+
+async function loadPendingImage() {
+  const data = await chrome.storage.local.get('pendingImage');
+  if (data.pendingImage) importImagePayload(data.pendingImage);
+}
+
+async function loadDraft() {
+  if (state.settings?.storage?.autoSaveDraft === false) return;
+  const draft = await restoreDraft();
+  if (!draft?.currentImage) return;
+  state.currentImage = normalizeImageInput(draft.currentImage);
+  state.prompts = { ...createEmptyPrompts(), ...(draft.prompts || {}) };
+  state.results = draft.results || [];
+  state.generateSettings = draft.generateSettings || {};
+  state.extraInstruction = draft.extraInstruction || '';
+  state.userExtraPrompt = draft.userExtraPrompt || '';
+  state.taskStatus = { phase: 'restored', message: '已恢复上次草稿' };
+  $('extraInstruction').value = state.extraInstruction || '';
+  $('userExtraPrompt').value = state.userExtraPrompt || '';
+}
+
+// ════════════════════════════════════════════════════════════════
+// Image import
+// ════════════════════════════════════════════════════════════════
+
+function importImagePayload(payload) {
+  setCurrentImage(normalizeImageInput(payload));
+}
+
+function setCurrentImage(image) {
+  state.currentImage = image;
+  state.prompts = createEmptyPrompts();
+  state.results = [];
+  state.generateSettings = {};
+  state.lastError = null;
+  state.lastGenerateForceMixed = false;
+  setTaskStatus('idle', '图片已接收，请点击反推');
+  renderAll();
+  queueSaveDraft();
+}
+
+async function clearCurrentImage() {
+  state.currentImage = null;
+  state.prompts = createEmptyPrompts();
+  state.results = [];
+  state.generateSettings = {};
+  state.lastError = null;
+  state.lastGenerateForceMixed = false;
+  await chrome.storage.local.remove('pendingImage');
+  await clearDraft();
+  setTaskStatus('waiting-image', '等待右键发送图片');
+  renderAll();
+}
+
+// ════════════════════════════════════════════════════════════════
+// API status
+// ════════════════════════════════════════════════════════════════
+
+async function refreshApiStatus() {
+  state.apiStatus.prompt = { status: 'checking', message: 'Prompt API 检测中' };
+  state.apiStatus.image = { status: 'checking', message: 'Image API 检测中' };
+  renderApiStatus();
+  state.settings = await loadSettings();
+  setLogSettings(state.settings);
+  const [prompt, image] = await Promise.all([
+    checkPromptApiStatus(state.settings),
+    checkImageApiStatus(state.settings)
+  ]);
+  state.apiStatus.prompt = prompt;
+  state.apiStatus.image = image;
+  renderApiStatus();
+  renderButtonStates();
+}
+
+// ════════════════════════════════════════════════════════════════
+// Reverse prompt
+// ════════════════════════════════════════════════════════════════
+
+async function handleReversePrompt() {
+  if (!state.currentImage?.url && !state.currentImage?.dataUrl) {
+    toast('请先在网页图片上右键选择"图片转提示词"，或上传/拖拽/粘贴一张图片');
+    return;
+  }
+  if (!isPromptApiAvailable()) { toast('Prompt API 未连接，请先在设置中完成配置'); return; }
+
+  const startedAt = Date.now();
+  state.lastError = null;
+
+  setTaskStatus('analyzing', '正在反推提示词...');
+  renderTaskStatus();
+  renderError();
+
+  // Elapsed time updater
+  const timerEl = $('taskStatus');
+  const elapsedInterval = setInterval(() => {
+    const sec = Math.floor((Date.now() - startedAt) / 1000);
+    timerEl.textContent = `状态：正在反推中... 已耗时 ${sec} 秒`;
+  }, 1000);
+
+  try {
+    const result = await generatePromptFromImage({
+      currentImage: state.currentImage,
+      extraInstruction: state.extraInstruction || undefined,
+      settings: state.settings
+    });
+    clearInterval(elapsedInterval);
+
+    state.prompts = {
+      tags: result.tags || [],
+      zh: result.zh || '',
+      en: result.en || '',
+      analysis: result.analysis || createEmptyAnalysis()
+    };
+    $('promptProviderText').textContent = result.provider || '';
+
+    const durationMs = Date.now() - startedAt;
+    setTaskStatus('success', `反推完成 (${(durationMs / 1000).toFixed(1)}s)`);
+    await persistCurrentHistory();
+    await updateLastCallDisplay();
+    queueSaveDraft();
+    renderAll();
+  } catch (error) {
+    clearInterval(elapsedInterval);
+    state.lastError = normalizeError(error);
+    const durationMs = Date.now() - startedAt;
+
+    // HTTP 0 special message
+    let errMsg = getErrorMessage(error, '反推失败');
+    if ((error?.status || 0) === 0) {
+      errMsg = '请求没有获得有效 HTTP 响应，可能是超时、网络中断、CORS、请求被浏览器取消，或接口耗时过长。';
+    }
+
+    setTaskStatus('error', errMsg);
+    toast(errMsg);
+    renderTaskStatus();
+    renderError();
+    await updateLastCallDisplay();
+
+    // Clear prompts on failure — don't show stale/mock data
+    state.prompts = createEmptyPrompts();
+    state.results = [];
+    $('promptProviderText').textContent = error?.provider || '-';
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// Optimize prompt
+// ════════════════════════════════════════════════════════════════
+
+async function handleOptimizePrompt(language) {
+  const text = language === 'zh' ? $('promptZh').value.trim() : $('promptEn').value.trim();
+  if (!text) { toast(language === 'zh' ? '请先填写中文提示词' : 'Please fill in the English prompt first'); return; }
+  if (!isPromptApiAvailable()) { toast('Prompt API 未连接，请先在设置中完成配置'); return; }
+
+  const label = language === 'zh' ? '中文' : '英文';
+  const btn = $(`optimize${language === 'zh' ? 'Zh' : 'En'}Btn`);
+  btn.disabled = true;
+  btn.textContent = '优化中...';
+  setTaskStatus('analyzing', `正在优化${label}提示词...`);
+  renderTaskStatus();
+
+  try {
+    const result = await enhancePrompt({ text, language, settings: state.settings });
+    if (language === 'zh') { state.prompts.zh = result.text || text; $('promptZh').value = state.prompts.zh; }
+    else { state.prompts.en = result.text || text; $('promptEn').value = state.prompts.en; }
+    setTaskStatus('success', `${label}提示词优化完成`);
+    queueSaveDraft();
+    renderTaskStatus();
+  } catch (error) {
+    setTaskStatus('error', `优化${label}提示词失败`);
+    toast(state.taskStatus.message);
+    renderTaskStatus();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = language === 'zh' ? '优化中文' : '优化英文';
+    renderButtonStates();
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// Image generation
+// ════════════════════════════════════════════════════════════════
+
+async function handleGenerate(forceMixed) {
+  let prompt = $('promptEn').value.trim() || $('promptZh').value.trim();
+  if (!prompt) { toast('请先反推或填写提示词'); return; }
+  if (!isImageApiAvailable()) { toast('Image API 未连接，请先在设置中完成配置'); return; }
+
+  // Merge user extra prompt
+  const extra = (state.userExtraPrompt || '').trim();
+  if (extra) prompt = `${prompt} ${extra}`;
+
+  const mode = forceMixed ? 'mixed' : 'standard';
+  const count = forceMixed ? 4 : 4;
+
+  // Compute output size from settings
+  const api = state.settings?.imageApi || {};
+  const refImg = state.currentImage;
+  const previewImg = $('imagePreview');
+  const refWidth = refImg?.width || refImg?.originalWidth || previewImg?.naturalWidth || 0;
+  const refHeight = refImg?.height || refImg?.originalHeight || previewImg?.naturalHeight || 0;
+  const size = computeOutputSize({
+    sizeMode: api.sizeMode || 'preset',
+    quality: api.quality || 'standard',
+    selectedRatio: api.selectedRatio || '1:1',
+    customWidth: api.customWidth || 1024,
+    customHeight: api.customHeight || 1024,
+    refImage: refWidth && refHeight ? { width: refWidth, height: refHeight } : null
+  });
+  const width = size.width;
+  const height = size.height;
+  state.generateSettings = { mode, count, width, height };
+
+  setTaskStatus('generating', `正在生成图片... ${width}x${height}`);
+  state.lastError = null;
+  renderTaskStatus();
+  renderError();
+
+  try {
+    const referenceImage = state.currentImage?.dataUrl || state.currentImage?.url || '';
+    const result = await generateImages({
+      prompt, negativePrompt: '',
+      referenceImage, settings: state.settings, mode, count, width, height
+    });
+    state.results = result.images || [];
+    state.lastGenerateForceMixed = forceMixed;
+    state.lastError = null;
+    setTaskStatus('success', '生成完成');
+    await persistCurrentHistory();
+    await updateLastCallDisplay();
+    queueSaveDraft();
+    renderAll();
+  } catch (error) {
+    state.lastError = normalizeError(error);
+    setTaskStatus('error', getErrorMessage(error, '生成失败'));
+    toast(state.taskStatus.message);
+    renderTaskStatus();
+    renderError();
+    await updateLastCallDisplay();
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// Last call display
+// ════════════════════════════════════════════════════════════════
+
+async function updateLastCallDisplay() {
+  state.lastCall = await getLastCall();
+  const badge = $('lastCallBadge');
+  if (!state.lastCall) {
+    badge.classList.add('hidden');
+    return;
+  }
+  badge.classList.remove('hidden');
+  badge.className = `status-badge ${state.lastCall.success ? 'success' : 'error'}`;
+  const label = state.lastCall.apiType === 'prompt' ? 'Prompt' : state.lastCall.apiType === 'image' ? 'Image' : state.lastCall.apiType;
+  badge.innerHTML = `<span></span>${label}: ${state.lastCall.status} ${state.lastCall.durationMs}ms`;
+  badge.title = `${state.lastCall.provider} ${state.lastCall.method} ${state.lastCall.endpoint}\n${state.lastCall.message}`;
+}
+
+// ════════════════════════════════════════════════════════════════
+// Debug drawer
+// ════════════════════════════════════════════════════════════════
+
+async function openDebugDrawer() {
+  renderDebugStateSummary();
+  renderDebugLastCall();
+  $('debugDrawer').classList.remove('hidden');
+  await renderDebugLogs();
+}
+
+function closeDebugDrawer() {
+  $('debugDrawer').classList.add('hidden');
+  $('debugLogDetail').classList.add('hidden');
+}
+
+function renderDebugStateSummary() {
+  const items = [
+    ['Prompt API', state.apiStatus.prompt?.status || 'unknown'],
+    ['Image API', state.apiStatus.image?.status || 'unknown'],
+    ['Current Image', state.currentImage ? '有' : '无'],
+    ['Prompt ZH', state.prompts.zh ? `${state.prompts.zh.length} chars` : '空'],
+    ['Prompt EN', state.prompts.en ? `${state.prompts.en.length} chars` : '空'],
+    ['Results', `${state.results.length} 张`],
+    ['Task Phase', state.taskStatus.phase || 'idle'],
+    ['Last Error', state.lastError ? state.lastError.code : '无'],
+    ['Debug Mode', state.settings?.advanced?.enableDebugMode ? '开' : '关'],
+    ['Save Logs', state.settings?.advanced?.saveDebugLogs ? '开' : '关']
+  ];
+  $('debugStateGrid').innerHTML = items.map(([k, v]) =>
+    `<div class="debug-state-item"><dt>${k}</dt><dd>${v}</dd></div>`
+  ).join('');
+}
+
+async function renderDebugLastCall() {
+  const call = await getLastCall();
+  const el = $('debugLastCall');
+  if (!call) { el.innerHTML = '<span class="muted">暂无调用</span>'; return; }
+  const icon = call.success ? '✓' : '✗';
+  const cls = call.success ? 'success' : 'error';
+  el.innerHTML = `<span class="${cls}">${icon} ${call.apiType} | ${call.provider} | ${call.method} ${call.endpoint} | HTTP ${call.status} | ${call.durationMs}ms</span>
+    <br><small class="muted">${call.message} · ${new Date(call.createdAt).toLocaleTimeString()}</small>`;
+}
+
+async function renderDebugLogs() {
+  const level = $('debugLevelFilter').value;
+  const apiType = $('debugApiTypeFilter').value;
+  const keyword = $('debugSearchInput').value.trim();
+
+  const filters = {};
+  if (level !== 'all') filters.level = level;
+  if (apiType !== 'all') filters.apiType = apiType;
+  if (keyword) filters.keyword = keyword;
+
+  const logs = await getLogs(filters);
+  const list = $('debugLogList');
+  if (!logs.length) {
+    list.innerHTML = '<div class="empty-state"><p>暂无日志</p></div>';
+    return;
+  }
+
+  list.innerHTML = logs.map((log) => `
+    <div class="debug-log-row" data-id="${log.id}">
+      <span class="log-lvl ${log.level}">${log.level}</span>
+      <span class="log-time">${formatTimeShort(log.createdAt)}</span>
+      <span class="log-msg" title="${escapeHtml(log.message)}">${escapeHtml(log.message)}</span>
+      <span class="log-type">${escapeHtml(log.apiType || '')}</span>
+    </div>
+  `).join('');
+
+  list.querySelectorAll('.debug-log-row').forEach((row) => {
+    row.addEventListener('click', () => {
+      const id = row.dataset.id;
+      const entry = logs.find((l) => l.id === id);
+      if (entry) showLogDetail(entry, row);
+    });
+  });
+}
+
+function showLogDetail(entry, rowEl) {
+  document.querySelectorAll('.debug-log-row.selected').forEach((r) => r.classList.remove('selected'));
+  rowEl.classList.add('selected');
+  const detail = $('debugLogDetail');
+  detail.classList.remove('hidden');
+  $('debugLogDetailPre').textContent = JSON.stringify(entry, null, 2);
+}
+
+async function handleClearDebugLogs() {
+  if (!confirm('确定清空全部调试日志吗？')) return;
+  await clearLogs();
+  await renderDebugLogs();
+  toast('调试日志已清空');
+}
+
+async function handleExportDebugLogs() {
+  const logs = await getLogs();
+  const blob = new Blob([JSON.stringify(logs, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `promptpilot-debug-${Date.now()}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast(`已导出 ${logs.length} 条日志`);
+}
+
+// ════════════════════════════════════════════════════════════════
+// Download, History, etc.
+// ════════════════════════════════════════════════════════════════
+
+async function handleDownloadAll() {
+  if (!state.results.length) return;
+  const results = await downloadAllImages(state.results);
+  const failed = results.find((item) => !item.success);
+  if (failed) { state.lastError = failed.error; renderError(); toast('部分图片下载失败'); }
+  else { toast('已开始下载全部图片'); }
+}
+
+async function handleCopyError() {
+  if (!state.lastError) return;
+  await navigator.clipboard.writeText(sanitizeErrorLog(state.lastError));
+  toast('已复制错误日志');
+}
+
+async function openHistoryModal() {
+  state.historyItems = await getHistory();
+  $('historyModal').classList.remove('hidden');
+  renderHistoryList();
+}
+
+function closeHistoryModal() { $('historyModal').classList.add('hidden'); }
+
+function renderHistoryList() {
+  const list = getFilteredHistory();
+  const wrap = $('historyList');
+  wrap.innerHTML = '';
+  if (!list.length) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.textContent = '暂无历史记录';
+    wrap.appendChild(empty);
+    return;
+  }
+
+  list.forEach((item) => {
+    const row = document.createElement('article');
+    row.className = 'history-item';
+    const thumb = item.results?.[0]?.thumbUrl || item.results?.[0]?.url || item.image?.displayUrl || item.image?.url || '';
+    row.innerHTML = `
+      <div class="history-main">
+        ${thumb ? `<img class="history-thumb" src="${escapeAttr(thumb)}" alt="">` : '<div class="history-thumb"></div>'}
+        <div>
+          <div class="history-title">${escapeHtml(item.title || '未命名记录')}</div>
+          <div class="history-meta">${formatDateTime(item.createdAt)} · ${escapeHtml(item.image?.pageTitle || '未知页面')} · ${item.results?.length || 0} 张结果</div>
+          <div class="history-tags">${(item.prompts?.tags || []).slice(0, 8).map((tag) => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}</div>
+        </div>
+      </div>
+      <div class="history-prompt">中：${escapeHtml(truncate(item.prompts?.zh || '', 60))}</div>
+      <div class="history-prompt">EN：${escapeHtml(truncate(item.prompts?.en || '', 80))}</div>
+      <div class="history-actions">
+        <button class="secondary-btn" data-action="restore">恢复</button>
+        <button class="secondary-btn" data-action="delete">删除</button>
+        <button class="secondary-btn" data-action="copy-en">复制英文</button>
+        <button class="secondary-btn" data-action="download">下载结果</button>
+      </div>
+    `;
+    row.querySelector('[data-action="restore"]').addEventListener('click', () => restoreHistoryItem(item));
+    row.querySelector('[data-action="delete"]').addEventListener('click', () => handleDeleteHistoryItem(item.id));
+    row.querySelector('[data-action="copy-en"]').addEventListener('click', () => copyText(item.prompts?.en || '', '已复制英文提示词'));
+    row.querySelector('[data-action="download"]').addEventListener('click', async () => {
+      if (!item.results?.length) return toast('该记录没有生成结果');
+      await downloadAllImages(item.results);
+      toast('已开始下载历史结果');
+    });
+    wrap.appendChild(row);
+  });
+}
+
+function getFilteredHistory() {
+  const query = state.historyQuery.trim().toLowerCase();
+  return [...state.historyItems]
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+    .filter((item) => {
+      if (state.historyFilter === 'prompt-only' && item.results?.length) return false;
+      if (state.historyFilter === 'with-results' && !item.results?.length) return false;
+      if (state.historyFilter === 'with-error' && !item.meta?.errorCount) return false;
+      if (!query) return true;
+      return [item.prompts?.zh, item.prompts?.en, item.image?.pageTitle, ...(item.prompts?.tags || [])].join(' ').toLowerCase().includes(query);
+    });
+}
+
+function restoreHistoryItem(item) {
+  state.currentImage = normalizeImageInput(item.image || {});
+  state.prompts = { ...createEmptyPrompts(), ...(item.prompts || {}) };
+  state.generateSettings = item.generateSettings || {};
+  state.results = item.results || [];
+  state.lastError = null;
+  if (item.templateMeta) {
+    state.extraInstruction = item.templateMeta.extraInstruction || '';
+    $('extraInstruction').value = state.extraInstruction || '';
+  }
+  setTaskStatus('restored', '已从历史恢复');
+  closeHistoryModal();
+  renderAll();
+  queueSaveDraft();
+}
+
+async function handleDeleteHistoryItem(id) {
+  await deleteHistoryItem(id);
+  state.historyItems = await getHistory();
+  renderHistoryList();
+}
+
+async function handleClearHistory() {
+  if (!confirm('确定清空全部历史记录吗？')) return;
+  await clearHistory();
+  state.historyItems = [];
+  renderHistoryList();
+  toast('历史记录已清空');
+}
+
+async function handleExportHistory() {
+  const payload = await exportHistory();
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url; link.download = createHistoryExportFilename(); link.click();
+  URL.revokeObjectURL(url);
+}
+
+async function copyText(text, message) {
+  if (!text.trim()) { toast('没有可复制的内容'); return; }
+  await navigator.clipboard.writeText(text);
+  toast(message);
+}
+
+async function persistCurrentHistory() {
+  if (state.settings?.storage?.enableHistory === false) return;
+  const historyItem = createHistoryItemFromState(state);
+  if (state.settings?.storage?.saveResults === false) historyItem.results = [];
+  const saved = await saveHistoryItem(historyItem);
+  if (saved?.reduced) toast('该记录过大，仅保存可恢复的 Prompt 信息');
+}
+
+async function handleManualSaveHistory() {
+  if (!state.currentImage && !state.prompts.zh && !state.prompts.en) { toast('没有可保存的内容'); return; }
+  await persistCurrentHistory();
+  toast('已保存到历史');
+}
+
+function queueSaveDraft() {
+  if (state.settings?.storage?.autoSaveDraft === false) return;
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(() => { saveDraft(state).catch((error) => console.warn('Failed to save draft:', error)); }, 800);
+}
+
+function setTaskStatus(phase, message) { state.taskStatus = { phase, message }; }
+
+// ════════════════════════════════════════════════════════════════
+// Rendering
+// ════════════════════════════════════════════════════════════════
+
+function renderAll() {
+  renderCurrentImage();
+  renderPromptResult();
+  renderApiStatus();
+  renderResults();
+  renderError();
+  renderButtonStates();
+  renderTaskStatus();
+  updateLastCallDisplay();
+}
+
+function renderCurrentImage() {
+  const image = state.currentImage;
+  const hasImage = Boolean(image && (image.displayUrl || image.url || image.dataUrl));
+  const useUrl = image?.displayUrl || image?.dataUrl || image?.url || '';
+  $('imageDropHint').classList.add('hidden');
+  $('imageErrorPlaceholder').classList.add('hidden');
+  $('imageWarning').classList.add('hidden');
+  $('imageEmptyState').classList.toggle('hidden', hasImage);
+  $('imagePreviewWrap').classList.toggle('hidden', !hasImage);
+  if (hasImage) {
+    $('imagePreview').src = useUrl;
+    if (image.warning) { $('imageWarning').textContent = image.warning; $('imageWarning').classList.remove('hidden'); }
+  }
+}
+
+function renderPromptResult() {
+  $('promptZh').value = state.prompts.zh || '';
+  $('promptEn').value = state.prompts.en || '';
+  $('tagsWrap').innerHTML = '';
+  state.prompts.tags.forEach((tag) => { const el = document.createElement('span'); el.className = 'tag'; el.textContent = tag; $('tagsWrap').appendChild(el); });
+}
+
+function renderApiStatus() {
+  updateBadge($('promptStatusBadge'), state.apiStatus.prompt.status, statusText(state.apiStatus.prompt.status, 'prompt'));
+  updateBadge($('imageStatusBadge'), state.apiStatus.image.status, statusText(state.apiStatus.image.status, 'image'));
+}
+
+function updateBadge(el, status, text) { el.className = `status-badge ${status}`; el.innerHTML = '<span></span>' + text; el.title = text; }
+
+function renderResults() {
+  $('resultsGrid').innerHTML = '';
+  state.results.forEach((image, index) => {
+    const card = document.createElement('article');
+    card.className = 'result-card';
+    card.innerHTML = `<img src="${image.thumbUrl || image.url}" alt="${image.label || `结果 ${index + 1}`}"><div class="result-card-body"><div class="result-card-title">${image.label || `结果 ${index + 1}`}</div><div class="result-actions"><button class="secondary-btn" data-action="download">下载图片 ${index + 1}</button></div></div>`;
+    card.querySelector('[data-action="download"]').addEventListener('click', async () => {
+      const result = await downloadImage(image, index + 1);
+      if (!result.success) { state.lastError = result.error; renderError(); toast(result.error?.message || '下载失败'); }
+      else { toast('已开始下载图片'); }
+    });
+    $('resultsGrid').appendChild(card);
+  });
+}
+
+function renderError() {
+  const hasError = Boolean(state.lastError);
+  $('errorCard').classList.toggle('hidden', !hasError);
+  if (!hasError) return;
+  const error = state.lastError;
+
+  $('errorCodeText').textContent = error.code || ERROR_CODES.UNKNOWN_ERROR;
+  $('errorRetryableText').textContent = error.retryable ? '可重试' : '不可重试';
+
+  // HTTP 0 special message
+  const httpStatus = error.status || 0;
+  let msg = error.message || '操作失败';
+  if (httpStatus === 0) {
+    msg = '请求没有获得有效 HTTP 响应，可能是超时、网络中断、CORS、请求被浏览器取消，或接口耗时过长。';
+  }
+  $('errorMessageText').textContent = msg;
+  $('errorProviderText').textContent = `Provider: ${error.provider || '-'}`;
+  $('errorStatusText').textContent = httpStatus === 0 ? 'HTTP: 0 (无响应)' : `HTTP: ${httpStatus}`;
+}
+
+function renderButtonStates() {
+  const hasImage = Boolean(state.currentImage && (state.currentImage.url || state.currentImage.dataUrl));
+  const hasPrompt = Boolean(($('promptEn').value || $('promptZh').value || state.prompts.en || state.prompts.zh).trim());
+  const canUsePromptApi = isPromptApiAvailable();
+  const canUseImageApi = isImageApiAvailable();
+  $('reverseBtn').disabled = !hasImage || !canUsePromptApi;
+  $('generateBtn').disabled = !hasPrompt || !canUseImageApi;
+  $('generateMixedBtn').disabled = !hasPrompt || !canUseImageApi;
+  $('downloadAllBtn').disabled = !state.results.length;
+  $('regenerateBtn').disabled = !hasPrompt || !state.results.length || !canUseImageApi;
+  $('clearBtn').disabled = !hasImage;
+  $('optimizeZhBtn').disabled = !hasPrompt || !canUsePromptApi;
+  $('optimizeEnBtn').disabled = !hasPrompt || !canUsePromptApi;
+}
+
+function renderTaskStatus() { $('taskStatus').textContent = `状态：${state.taskStatus.message}`; }
+function toast(message) { const el = $('toast'); el.textContent = message; el.classList.remove('hidden'); setTimeout(() => el.classList.add('hidden'), 2200); }
+
+// ════════════════════════════════════════════════════════════════
+// Helpers
+// ════════════════════════════════════════════════════════════════
+
+function createEmptyPrompts() { return { tags: [], zh: '', en: '', analysis: createEmptyAnalysis() }; }
+function createEmptyAnalysis() { return { subject: '', scene: '', style: '', color: '', composition: '', camera: '', lighting: '', details: '' }; }
+function isPromptApiAvailable() { return ['connected', 'unconfigured'].includes(state.apiStatus.prompt.status); }
+function isImageApiAvailable() { return ['connected', 'unconfigured'].includes(state.apiStatus.image.status); }
+function truncate(value, max) { const text = String(value || ''); return text.length > max ? `${text.slice(0, max)}...` : text; }
+function escapeHtml(value) { return String(value || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'); }
+function escapeAttr(value) { return escapeHtml(value).replaceAll("'", '&#39;'); }
+function formatTimeShort(ts) { const d = new Date(ts || Date.now()); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`; }
+function pad2(v) { return String(v).padStart(2, '0'); }
+
+init().catch((error) => {
+  console.error(error);
+  toast(getErrorMessage(error, '初始化失败'));
+});

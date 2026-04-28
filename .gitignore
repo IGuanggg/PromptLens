@@ -1,0 +1,19 @@
+# Archives
+*.zip
+*.7z
+*.rar
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Local editor files
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.bak
