@@ -1,6 +1,6 @@
 import { createId } from '../utils/id.js';
 import { formatCompactDateTime } from '../utils/date.js';
-import { sanitizeHistoryItem } from '../utils/sanitize.js';
+import { isQuotaExceededError, sanitizeHistoryItem } from '../utils/sanitize.js';
 import { loadSettings } from './storageService.js';
 
 export const HISTORY_KEY = 'promptpilotHistory';
@@ -39,12 +39,12 @@ export async function saveHistoryItem(item) {
       createdAt: existing.createdAt,
       updatedAt: now
     };
-    await chrome.storage.local.set({ [HISTORY_KEY]: await trimList(history, getHistoryLimit(settings)) });
+    await saveHistoryList(await trimList(history, getHistoryLimit(settings)));
     return { item: history[duplicateIndex], updated: true, reduced: sanitized.reduced };
   }
 
   const next = [sanitized.item, ...history];
-  await chrome.storage.local.set({ [HISTORY_KEY]: await trimList(next, getHistoryLimit(settings)) });
+  await saveHistoryList(await trimList(next, getHistoryLimit(settings)));
   return { item: sanitized.item, updated: false, reduced: sanitized.reduced };
 }
 
@@ -57,19 +57,19 @@ export async function updateHistoryItem(id, patch) {
     ...patch,
     updatedAt: Date.now()
   };
-  await chrome.storage.local.set({ [HISTORY_KEY]: history });
+  await saveHistoryList(history);
   return history[index];
 }
 
 export async function deleteHistoryItem(id) {
   const history = await getHistory();
   const next = history.filter((item) => item.id !== id);
-  await chrome.storage.local.set({ [HISTORY_KEY]: next });
+  await saveHistoryList(next);
   return next;
 }
 
 export async function clearHistory() {
-  await chrome.storage.local.set({ [HISTORY_KEY]: [] });
+  await saveHistoryList([]);
 }
 
 export async function exportHistory() {
@@ -90,14 +90,14 @@ export async function importHistory(items) {
     .filter((item) => item && item.id && !existingIds.has(item.id))
     .map((item) => sanitizeHistoryItem(item).item);
   const next = await trimList([...cleaned, ...existing], getHistoryLimit(settings));
-  await chrome.storage.local.set({ [HISTORY_KEY]: next });
+  await saveHistoryList(next);
   return next;
 }
 
 export async function trimHistory(limit) {
   const history = await getHistory();
   const next = await trimList(history, Number(limit || DEFAULT_HISTORY_LIMIT));
-  await chrome.storage.local.set({ [HISTORY_KEY]: next });
+  await saveHistoryList(next);
   return next;
 }
 
@@ -147,8 +147,8 @@ export function createHistoryItemFromState(state) {
       providerType: imageApi.type || '',
       model: imageApi.model || '',
       mode: state.generateSettings?.mode || 'standard',
-      width: Number(state.generateSettings?.width || 1024),
-      height: Number(state.generateSettings?.height || 1024),
+      width: Number(state.generateSettings?.width || 720),
+      height: Number(state.generateSettings?.height || 720),
       count: Number(state.generateSettings?.count || 4),
       negativePrompt: ''
     },
@@ -185,3 +185,23 @@ async function trimList(items, limit) {
   return [...items].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, Number(limit || DEFAULT_HISTORY_LIMIT));
 }
 
+async function saveHistoryList(items) {
+  try {
+    await chrome.storage.local.set({ [HISTORY_KEY]: items });
+    return items;
+  } catch (error) {
+    if (!isQuotaExceededError(error)) throw error;
+    await chrome.storage.local.remove(['promptpilotLogs', 'promptpilotDraft']).catch(() => {});
+    const reduced = items.map((item) => {
+      const copy = JSON.parse(JSON.stringify(item || {}));
+      if (copy.image) {
+        copy.image.dataUrl = '';
+        if (String(copy.image.displayUrl || '').startsWith('data:')) copy.image.displayUrl = copy.image.url || '';
+      }
+      copy.results = [];
+      return copy;
+    });
+    await chrome.storage.local.set({ [HISTORY_KEY]: reduced.slice(0, Math.min(reduced.length, 10)) });
+    return reduced;
+  }
+}

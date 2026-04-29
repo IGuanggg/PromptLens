@@ -1,12 +1,12 @@
-import { loadSettings } from '../services/storageService.js';
+﻿import { loadSettings } from '../services/storageService.js';
 import { checkPromptApiStatus, checkImageApiStatus } from '../adapters/status/healthCheck.js';
 import { generatePromptFromImage, enhancePrompt } from '../services/promptService.js';
 import { generateImages } from '../services/imageService.js';
 import { downloadImage, downloadAllImages } from '../services/downloadService.js';
 import { clearDraft, restoreDraft, saveDraft } from '../services/draftService.js';
 import { clearHistory, createHistoryExportFilename, createHistoryItemFromState, deleteHistoryItem, exportHistory, getHistory, importHistory, saveHistoryItem } from '../services/historyService.js';
-import { getLogs, clearLogs, getLastCall, initLogService, setLogSettings, setLogLimit } from '../services/logService.js';
-import { computeOutputSize } from '../utils/imageSize.js';
+import { getLogs, clearLogs, getLastCall, initLogService, setLogSettings, setLogLimit, appendLog } from '../services/logService.js';
+import { getOutputSize, migrateResolutionPreset, migrateSizeMode } from '../utils/size.js';
 import { statusText } from '../utils/format.js';
 import { ERROR_CODES, getErrorMessage, normalizeError, sanitizeErrorLog } from '../utils/errors.js';
 import { formatDateTime } from '../utils/date.js';
@@ -421,6 +421,9 @@ async function handleGenerate(forceMixed) {
   if (!prompt) { toast('请先反推或填写提示词'); return; }
   if (!isImageApiAvailable()) { toast('Image API 未连接，请先在设置中完成配置'); return; }
 
+  state.settings = await loadSettings();
+  setLogSettings(state.settings);
+
   // Merge user extra prompt
   const extra = (state.userExtraPrompt || '').trim();
   if (extra) prompt = `${prompt} ${extra}`;
@@ -434,18 +437,38 @@ async function handleGenerate(forceMixed) {
   const previewImg = $('imagePreview');
   const refWidth = refImg?.width || refImg?.originalWidth || previewImg?.naturalWidth || 0;
   const refHeight = refImg?.height || refImg?.originalHeight || previewImg?.naturalHeight || 0;
-  const size = computeOutputSize({
-    sizeMode: api.sizeMode || 'preset',
-    quality: api.quality || 'standard',
-    selectedRatio: api.selectedRatio || '1:1',
-    customWidth: api.customWidth || 1024,
-    customHeight: api.customHeight || 1024,
-    refImage: refWidth && refHeight ? { width: refWidth, height: refHeight } : null
+  const sizeMode = migrateSizeMode(api.sizeMode || 'preset');
+  const aspectRatio = api.aspectRatio || api.selectedRatio || '1:1';
+  const resolutionPreset = migrateResolutionPreset(api.resolutionPreset || api.quality);
+  const outputSize = getOutputSize({
+    sizeMode,
+    aspectRatio,
+    resolutionPreset,
+    customWidth: api.customWidth || 720,
+    customHeight: api.customHeight || 720,
+    referenceImage: refWidth && refHeight ? { width: refWidth, height: refHeight } : null
   });
-  const width = size.width;
-  const height = size.height;
-  state.generateSettings = { mode, count, width, height };
+  const width = outputSize.width;
+  const height = outputSize.height;
+  const size = outputSize.size;
+  const dashscopeSize = outputSize.dashscopeSize;
+  state.generateSettings = { mode, count, width, height, size, dashscopeSize, sizeMode, aspectRatio: outputSize.aspectRatio, resolutionPreset };
 
+  appendLog({
+    level: 'info',
+    apiType: 'image',
+    event: 'IMAGE_GENERATE_START',
+    provider: api.type || 'openai-compatible-image',
+    message: `Start image generation: ${size}`,
+    data: {
+      requestedSize: size,
+      width,
+      height,
+      sizeMode,
+      aspectRatio: outputSize.aspectRatio,
+      resolutionPreset
+    }
+  });
   setTaskStatus('generating', `正在生成图片... ${width}x${height}`);
   state.lastError = null;
   renderTaskStatus();
@@ -455,7 +478,7 @@ async function handleGenerate(forceMixed) {
     const referenceImage = state.currentImage?.dataUrl || state.currentImage?.url || '';
     const result = await generateImages({
       prompt, negativePrompt: '',
-      referenceImage, settings: state.settings, mode, count, width, height
+      referenceImage, settings: state.settings, mode, count, width, height, size, dashscopeSize, outputSize
     });
     state.results = result.images || [];
     state.lastGenerateForceMixed = forceMixed;
@@ -731,10 +754,20 @@ async function copyText(text, message) {
 
 async function persistCurrentHistory() {
   if (state.settings?.storage?.enableHistory === false) return;
-  const historyItem = createHistoryItemFromState(state);
-  if (state.settings?.storage?.saveResults === false) historyItem.results = [];
-  const saved = await saveHistoryItem(historyItem);
-  if (saved?.reduced) toast('该记录过大，仅保存可恢复的 Prompt 信息');
+  try {
+    const historyItem = createHistoryItemFromState(state);
+    if (state.settings?.storage?.saveResults === false) historyItem.results = [];
+    const saved = await saveHistoryItem(historyItem);
+    if (saved?.reduced) toast('该记录过大，仅保存可恢复的 Prompt 信息');
+  } catch (error) {
+    appendLog({
+      level: 'warn',
+      apiType: 'system',
+      event: 'HISTORY_SAVE_SKIPPED',
+      message: `历史保存失败，已跳过: ${error?.message || ''}`
+    });
+    toast('历史缓存空间不足，本次仅显示结果不写入历史');
+  }
 }
 
 async function handleManualSaveHistory() {
@@ -800,7 +833,46 @@ function renderResults() {
   state.results.forEach((image, index) => {
     const card = document.createElement('article');
     card.className = 'result-card';
-    card.innerHTML = `<img src="${image.thumbUrl || image.url}" alt="${image.label || `结果 ${index + 1}`}"><div class="result-card-body"><div class="result-card-title">${image.label || `结果 ${index + 1}`}</div><div class="result-actions"><button class="secondary-btn" data-action="download">下载图片 ${index + 1}</button></div></div>`;
+    card.innerHTML = `<img src="${image.url || image.thumbUrl}" alt="${image.label || `结果 ${index + 1}`}"><div class="result-card-body"><div class="result-card-title">${image.label || `结果 ${index + 1}`}</div><div class="result-size-warning hidden">输出比例与设置不一致，可能是当前模型或接口不支持该尺寸。</div><div class="result-actions"><button class="secondary-btn" data-action="download">下载图片 ${index + 1}</button></div></div>`;
+    const imgEl = card.querySelector('img');
+    imgEl.addEventListener('load', async () => {
+      const actual = await getImageNaturalSize(imgEl.src);
+      if (!actual.width || !actual.height) return;
+      image.width = actual.width;
+      image.height = actual.height;
+      const requestedWidth = Number(state.generateSettings?.width || 0);
+      const requestedHeight = Number(state.generateSettings?.height || 0);
+      const resultSize = `${actual.width}x${actual.height}`;
+      appendLog({
+        level: 'info',
+        apiType: 'image',
+        event: 'IMAGE_RESULT_SIZE',
+        provider: image.provider || state.settings?.imageApi?.type || '',
+        message: `Image result size: ${resultSize}`,
+        data: {
+          requestedSize: state.generateSettings?.size || '',
+          resultSize,
+          width: actual.width,
+          height: actual.height
+        }
+      });
+      if (requestedWidth && requestedHeight && !isSameAspectRatio(requestedWidth, requestedHeight, actual.width, actual.height)) {
+        card.querySelector('.result-size-warning')?.classList.remove('hidden');
+        appendLog({
+          level: 'warn',
+          apiType: 'image',
+          event: 'IMAGE_RESULT_RATIO_MISMATCH',
+          provider: image.provider || state.settings?.imageApi?.type || '',
+          message: `Result ratio mismatch: requested ${requestedWidth}x${requestedHeight}, got ${resultSize}`,
+          data: {
+            requestedSize: state.generateSettings?.size || '',
+            resultSize,
+            width: actual.width,
+            height: actual.height
+          }
+        });
+      }
+    }, { once: true });
     card.querySelector('[data-action="download"]').addEventListener('click', async () => {
       const result = await downloadImage(image, index + 1);
       if (!result.success) { state.lastError = result.error; renderError(); toast(result.error?.message || '下载失败'); }
@@ -856,6 +928,20 @@ function createEmptyPrompts() { return { tags: [], zh: '', en: '', analysis: cre
 function createEmptyAnalysis() { return { subject: '', scene: '', style: '', color: '', composition: '', camera: '', lighting: '', details: '' }; }
 function isPromptApiAvailable() { return ['connected', 'unconfigured'].includes(state.apiStatus.prompt.status); }
 function isImageApiAvailable() { return ['connected', 'unconfigured'].includes(state.apiStatus.image.status); }
+function isSameAspectRatio(expectedWidth, expectedHeight, actualWidth, actualHeight) {
+  const expected = Number(expectedWidth) / Number(expectedHeight);
+  const actual = Number(actualWidth) / Number(actualHeight);
+  if (!Number.isFinite(expected) || !Number.isFinite(actual)) return true;
+  return Math.abs(expected - actual) <= 0.08;
+}
+function getImageNaturalSize(url) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    img.onerror = () => resolve({ width: 0, height: 0 });
+    img.src = url;
+  });
+}
 function truncate(value, max) { const text = String(value || ''); return text.length > max ? `${text.slice(0, max)}...` : text; }
 function escapeHtml(value) { return String(value || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;'); }
 function escapeAttr(value) { return escapeHtml(value).replaceAll("'", '&#39;'); }

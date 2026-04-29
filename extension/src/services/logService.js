@@ -8,6 +8,7 @@
 
 import { createId } from '../utils/id.js';
 import { maskApiKey, maskAuthorization, maskBase64Image, maskHeaders } from '../utils/mask.js';
+import { isQuotaExceededError } from '../utils/sanitize.js';
 import { safeStringify, truncateString } from '../utils/safeJson.js';
 
 const LOG_KEY = 'promptpilotLogs';
@@ -88,7 +89,17 @@ export async function updateLastCall(call) {
     message: call.message || '',
     createdAt: call.createdAt || Date.now()
   };
-  await chrome.storage.local.set({ [LAST_CALL_KEY]: entry });
+  try {
+    await chrome.storage.local.set({ [LAST_CALL_KEY]: entry });
+  } catch (error) {
+    if (!isQuotaExceededError(error)) throw error;
+    await shrinkLogsForQuota();
+    try {
+      await chrome.storage.local.set({ [LAST_CALL_KEY]: entry });
+    } catch {
+      // lastCall is diagnostic only; never fail the user action because storage is full.
+    }
+  }
   return entry;
 }
 
@@ -149,7 +160,12 @@ export function getLogCount() {
 /** Force flush to storage immediately. */
 export async function flushLogs() {
   if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-  await chrome.storage.local.set({ [LOG_KEY]: logs });
+  try {
+    await chrome.storage.local.set({ [LOG_KEY]: logs });
+  } catch (error) {
+    if (!isQuotaExceededError(error)) throw error;
+    await shrinkLogsForQuota();
+  }
 }
 
 // ── Internal ──
@@ -255,6 +271,32 @@ function scheduleFlush() {
   if (flushTimer) clearTimeout(flushTimer);
   flushTimer = setTimeout(() => {
     flushTimer = null;
-    chrome.storage.local.set({ [LOG_KEY]: logs }).catch(() => {});
+    chrome.storage.local.set({ [LOG_KEY]: logs }).catch((error) => {
+      if (isQuotaExceededError(error)) shrinkLogsForQuota().catch(() => {});
+    });
   }, 500);
+}
+
+async function shrinkLogsForQuota() {
+  logs = logs.slice(0, Math.min(logs.length, 40)).map((entry) => ({
+    id: entry.id,
+    level: entry.level,
+    apiType: entry.apiType,
+    event: entry.event,
+    provider: entry.provider,
+    endpoint: entry.endpoint,
+    method: entry.method,
+    status: entry.status,
+    durationMs: entry.durationMs,
+    success: entry.success,
+    message: entry.message,
+    data: entry.data,
+    createdAt: entry.createdAt
+  }));
+  try {
+    await chrome.storage.local.set({ [LOG_KEY]: logs });
+  } catch {
+    logs = [];
+    await chrome.storage.local.remove(LOG_KEY).catch(() => {});
+  }
 }

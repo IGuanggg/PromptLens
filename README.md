@@ -1,6 +1,8 @@
 # PromptPilot
 
-![PromptPilot preview](docs/assets/preview.png)
+<p align="center">
+  <img src="docs/assets/preview.png" alt="PromptPilot preview" width="70%" />
+</p>
 
 PromptPilot 是一个 Chrome / Edge Manifest V3 浏览器插件，用于把网页图片反推成适合 AI 作图工具使用的提示词，并支持继续调用图像生成接口出图。
 

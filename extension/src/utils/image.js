@@ -1,4 +1,4 @@
 export function parseSize(size) {
-  const [width, height] = String(size || '1024x1024').split('x').map(Number);
-  return { width: width || 1024, height: height || 1024 };
+  const [width, height] = String(size || '720x720').split('x').map(Number);
+  return { width: width || 720, height: height || 720 };
 }

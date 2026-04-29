@@ -1,18 +1,21 @@
 import { appendLog, initLogService, setLogSettings } from './services/logService.js';
 import { loadSettings } from './services/storageService.js';
+import { isQuotaExceededError, sanitizePendingImage } from './utils/sanitize.js';
 
 const MENU_ID = 'image-to-prompt';
-const POPUP_URL = 'src/sidepanel/sidepanel.html';
+const PANEL_URL = 'src/sidepanel/sidepanel.html';
 const POPUP_WIDTH = 440;
 const POPUP_HEIGHT = 720;
 
 let popupWindowId = null;
+let currentPanelMode = 'popup'; // 'popup' | 'docked'
 
 // Initialize logging on service worker start
 (async () => {
   const settings = await loadSettings();
   setLogSettings(settings);
   await initLogService(settings);
+  currentPanelMode = settings?.storage?.panelMode || 'docked';
 })();
 
 chrome.runtime.onInstalled.addListener(async () => {
@@ -23,6 +26,8 @@ chrome.runtime.onInstalled.addListener(async () => {
     contexts: ['image']
   });
 
+  await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
+
   appendLog({
     level: 'info',
     apiType: 'system',
@@ -31,10 +36,7 @@ chrome.runtime.onInstalled.addListener(async () => {
   });
 });
 
-// ── Toolbar icon click: open popup ──
-chrome.action.onClicked.addListener(async () => {
-  await openPopupWindow();
-});
+// ── Toolbar icon: Chrome auto-opens side panel (openPanelOnActionClick: true) ──
 
 // ── Right-click context menu ──
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
@@ -80,8 +82,8 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
           message: 'Blob URL 已转换为 data URL'
         });
 
-        await chrome.storage.local.set({ pendingImage: payload });
-        await openPopupWindow(payload);
+        await savePendingImage(payload);
+        await openPanel(tab, payload);
         return;
       }
     } catch (error) {
@@ -99,7 +101,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     ? { ...basePayload, dataUrl: '', displayUrl: '', recoverable: false, warning: '当前 blob 图片无法直接恢复，请尝试截图粘贴或本地上传' }
     : basePayload;
 
-  await chrome.storage.local.set({ pendingImage: payload });
+  await savePendingImage(payload);
 
   appendLog({
     level: 'info',
@@ -108,14 +110,20 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     message: '图片已写入 pendingImage'
   });
 
-  await openPopupWindow(payload);
+  await openPanel(tab, payload);
 });
 
-// ── Listen for BLOB_CONVERTED from sidepanel ──
+// ── Message listeners ──
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Blob conversion relay
   if (message.type === 'BLOB_CONVERTED' && message.payload) {
-    chrome.storage.local.set({ pendingImage: message.payload });
+    savePendingImage(message.payload).catch(() => {});
     chrome.runtime.sendMessage({ type: 'IMAGE_SELECTED', payload: message.payload }).catch(() => {});
+  }
+
+  // Panel mode toggle from UI
+  if (message.type === 'TOGGLE_PANEL_MODE') {
+    handleTogglePanelMode(sender).catch(() => {});
   }
 });
 
@@ -126,32 +134,73 @@ chrome.windows.onRemoved.addListener((windowId) => {
   }
 });
 
-// ── Open popup window ──
-async function openPopupWindow(payload) {
-  // If window is already open, focus it and send the image
+// ── Open panel (popup or docked based on mode) ──
+async function openPanel(tab, payload) {
+  // Refresh settings to get latest panelMode
+  try {
+    const settings = await loadSettings();
+    currentPanelMode = settings?.storage?.panelMode || 'docked';
+  } catch {}
+
+  if (currentPanelMode === 'docked') {
+    await openDockedPanel(tab, payload);
+  } else {
+    await openPopupPanel(payload);
+  }
+}
+
+async function openDockedPanel(tab, payload) {
+  // If popup is already open, close it
+  if (popupWindowId !== null) {
+    try { await chrome.windows.remove(popupWindowId); } catch {}
+    popupWindowId = null;
+  }
+
+  try {
+    await chrome.sidePanel.open({ tabId: tab?.id });
+    if (payload) {
+      setTimeout(() => {
+        chrome.runtime.sendMessage({ type: 'IMAGE_SELECTED', payload }).catch(() => {});
+      }, 300);
+    }
+    appendLog({
+      level: 'info',
+      apiType: 'system',
+      event: 'SIDE_PANEL_OPENED',
+      message: '侧边栏已打开 (docked)'
+    });
+  } catch (error) {
+    appendLog({
+      level: 'error',
+      apiType: 'system',
+      event: 'SIDE_PANEL_OPEN_FAILED',
+      message: `侧边栏打开失败: ${error?.message || ''}`
+    });
+  }
+}
+
+async function openPopupPanel(payload) {
+  // If already open, focus it
   if (popupWindowId !== null) {
     try {
       await chrome.windows.update(popupWindowId, { focused: true });
       if (payload) {
-        // Small delay to let the window focus, then send
         setTimeout(() => {
           chrome.runtime.sendMessage({ type: 'IMAGE_SELECTED', payload }).catch(() => {});
         }, 300);
       }
       return;
     } catch {
-      // Window was closed externally
       popupWindowId = null;
     }
   }
 
   try {
-    // Load saved position or default center
     const storage = await chrome.storage.local.get('popupPosition');
     const pos = storage.popupPosition || {};
 
     const win = await chrome.windows.create({
-      url: POPUP_URL,
+      url: PANEL_URL,
       type: 'popup',
       width: pos.width || POPUP_WIDTH,
       height: pos.height || POPUP_HEIGHT,
@@ -174,6 +223,47 @@ async function openPopupWindow(payload) {
       apiType: 'system',
       event: 'POPUP_OPEN_FAILED',
       message: `浮动窗口打开失败: ${error?.message || ''}`
+    });
+  }
+}
+
+// ── Toggle panel mode ──
+async function handleTogglePanelMode(sender) {
+  const newMode = currentPanelMode === 'popup' ? 'docked' : 'popup';
+  currentPanelMode = newMode;
+
+  // Save preference
+  try {
+    const settings = await loadSettings();
+    settings.storage = settings.storage || {};
+    settings.storage.panelMode = newMode;
+    await chrome.storage.local.set({ settings });
+  } catch {}
+
+  // Notify the panel of mode change
+  chrome.runtime.sendMessage({ type: 'PANEL_MODE_CHANGED', mode: newMode }).catch(() => {});
+
+  appendLog({
+    level: 'info',
+    apiType: 'system',
+    event: 'PANEL_MODE_TOGGLED',
+    message: `面板模式切换为: ${newMode}`
+  });
+}
+
+async function savePendingImage(payload) {
+  try {
+    await chrome.storage.local.set({ pendingImage: payload });
+  } catch (error) {
+    if (!isQuotaExceededError(error)) throw error;
+    await chrome.storage.local.remove('promptpilotLogs').catch(() => {});
+    const reduced = sanitizePendingImage(payload);
+    await chrome.storage.local.set({ pendingImage: reduced });
+    appendLog({
+      level: 'warn',
+      apiType: 'system',
+      event: 'PENDING_IMAGE_REDUCED',
+      message: 'pendingImage 过大，已移除内联图片数据以避免存储配额溢出'
     });
   }
 }

@@ -31,7 +31,11 @@ export async function generatePromptFromImage({ currentImage, extraInstruction, 
   const api = settings?.promptApi || {};
   const type = api.type || PROMPT_API_TYPES.OPENAI_COMPATIBLE;
   const image = pickImageUrl(currentImage);
-  const mergedExtraInstruction = mergeExtraInstructions(api.customInstruction, extraInstruction);
+
+  // customInstruction from settings replaces the built-in template when non-empty
+  const customInst = String(api.customInstruction || '').trim();
+  const extra = String(extraInstruction || '').trim();
+  const hasCustom = !!customInst;
 
   if (!image.url && !mockMode) {
     throw new Error('没有可用的图片。请先导入一张图片。');
@@ -53,14 +57,22 @@ export async function generatePromptFromImage({ currentImage, extraInstruction, 
       imageInputType: image.type,
       hasImage: !!image.url,
       imageSizeBytes: currentImage?.sizeBytes || 0,
-      hasExtraInstruction: !!mergedExtraInstruction,
-      hasSettingsCustomInstruction: !!String(api.customInstruction || '').trim()
+      hasExtraInstruction: !!extra,
+      hasSettingsCustomInstruction: hasCustom
     }
   });
 
   try {
     const systemPrompt = DEFAULT_PROMPT_TEMPLATE.systemPrompt;
-    const userPrompt = DEFAULT_PROMPT_TEMPLATE.buildUserPrompt(mergedExtraInstruction);
+
+    // Build user prompt: customInstruction replaces built-in when non-empty
+    let userPrompt;
+    if (hasCustom) {
+      userPrompt = customInst;
+      if (extra) userPrompt += '\n\n额外要求：' + extra;
+    } else {
+      userPrompt = DEFAULT_PROMPT_TEMPLATE.buildUserPrompt(extra);
+    }
 
     let raw;
     if (type === PROMPT_API_TYPES.CUSTOM) {
@@ -237,8 +249,8 @@ export async function testPromptVisionApi(settings) {
     throw new Error('请先填写 Base URL、API Key 和 Model');
   }
 
-  // Tiny 1x1 PNG in base64 — just to verify the model accepts image_url blocks
-  const testImageDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+  // Generate a small 64x64 test image (1x1 is too small for most vision models)
+  const testImageDataUrl = createTestImage();
 
   const url = buildUrl(api.baseUrl, api.endpoint || '/v1/chat/completions');
   const body = JSON.stringify({
@@ -367,13 +379,6 @@ function maskPreview(key) {
   return key.slice(0, 4) + '****' + key.slice(-4);
 }
 
-function mergeExtraInstructions(...items) {
-  return items
-    .map((item) => String(item || '').trim())
-    .filter(Boolean)
-    .join('\n\n');
-}
-
 async function callCustomPrompt({ api, systemPrompt, userPrompt, imageUrl }) {
   const custom = api.custom || {};
   if (!api.baseUrl || !api.endpoint) {
@@ -480,4 +485,29 @@ function extractJson(text) {
   }
 
   return null;
+}
+
+/**
+ * Create a small test image (64×64 blue square with "Test" text).
+ * Generated via canvas — avoids the 1×1 pixel issue with vision models
+ * that require minimum dimensions.
+ */
+function createTestImage() {
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#3366cc';
+    ctx.fillRect(0, 0, 64, 64);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '20px sans-serif';
+    ctx.fillText('OK', 8, 42);
+    return canvas.toDataURL('image/png');
+  } catch {
+    // Fallback if canvas is unavailable
+    return 'data:image/svg+xml,' + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><rect width="64" height="64" fill="#36c"/><text x="8" y="42" fill="#fff" font-size="20">OK</text></svg>'
+    );
+  }
 }

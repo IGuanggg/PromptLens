@@ -1,10 +1,10 @@
-import { DEFAULT_SETTINGS, loadSettings, saveSettings, resetSettings, deepMerge } from '../services/storageService.js';
+﻿import { DEFAULT_SETTINGS, loadSettings, saveSettings, resetSettings, deepMerge } from '../services/storageService.js';
 import { clearDraft } from '../services/draftService.js';
 import { clearHistory, createHistoryExportFilename, exportHistory, importHistory } from '../services/historyService.js';
 import { getLogs, clearLogs, getLastCall, initLogService, setLogSettings, setLogLimit } from '../services/logService.js';
 import { appendLog, updateLastCall } from '../services/logService.js';
 import { testPromptTextApi, testPromptVisionApi } from '../services/promptService.js';
-import { RATIO_OPTIONS, computeOutputSize } from '../utils/imageSize.js';
+import { RATIO_OPTIONS, getOutputSize, mapSizeForOpenAIImages, migrateResolutionPreset, migrateSizeMode } from '../utils/size.js';
 
 const form = document.getElementById('settingsForm');
 const saveStatus = document.getElementById('saveStatus');
@@ -12,10 +12,10 @@ let settings = DEFAULT_SETTINGS;
 
 // ── Size control reactive state ──
 let sizeMode = 'preset';
-let selectedRatio = '1:1';
-let qualityPreset = 'standard';
-let customWidth = 1024;
-let customHeight = 1024;
+let aspectRatio = '1:1';
+let resolutionPreset = 'p720';
+let customWidth = 720;
+let customHeight = 720;
 let refImage = null;
 
 function getByPath(obj, path) {
@@ -80,19 +80,19 @@ function bindCustomFields() {
 
 function loadSizeState(s) {
   const api = s?.imageApi || {};
-  sizeMode = api.sizeMode || 'preset';
-  selectedRatio = api.selectedRatio || '1:1';
-  qualityPreset = api.quality || 'standard';
-  customWidth = api.customWidth || 1024;
-  customHeight = api.customHeight || 1024;
+  sizeMode = migrateSizeMode(api.sizeMode || 'preset');
+  aspectRatio = api.aspectRatio || api.selectedRatio || '1:1';
+  resolutionPreset = migrateResolutionPreset(api.resolutionPreset || api.quality);
+  customWidth = api.customWidth || 720;
+  customHeight = api.customHeight || 720;
 
   document.getElementById('sizeMode').value = sizeMode;
-  document.getElementById('qualityPreset').value = qualityPreset;
+  document.getElementById('resolutionPreset').value = resolutionPreset;
   document.getElementById('customWidth').value = customWidth;
   document.getElementById('customHeight').value = customHeight;
 
   document.querySelectorAll('#ratioButtons .ratio-btn').forEach((btn) => {
-    btn.classList.toggle('active', btn.dataset.ratio === selectedRatio);
+    btn.classList.toggle('active', btn.dataset.ratio === aspectRatio);
   });
 
   updateSizePanelVisibility();
@@ -111,13 +111,13 @@ function bindSizeControl() {
       event.preventDefault();
       document.querySelectorAll('#ratioButtons .ratio-btn').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
-      selectedRatio = btn.dataset.ratio;
+      aspectRatio = btn.dataset.ratio;
       updateFinalSize();
     });
   });
 
-  document.getElementById('qualityPreset').addEventListener('change', (e) => {
-    qualityPreset = e.target.value;
+  document.getElementById('resolutionPreset').addEventListener('change', (e) => {
+    resolutionPreset = migrateResolutionPreset(e.target.value);
     updateFinalSize();
   });
 
@@ -140,54 +140,57 @@ function updateSizePanelVisibility() {
 }
 
 function updateFinalSize() {
-  if (sizeMode === 'auto' && !refImage) {
-    document.getElementById('finalSizeLabel').textContent = '最终尺寸：跟随参考图，生成时自动判断 16:9 / 9:16 / 1:1';
-    document.getElementById('finalSizeLabel').className = 'final-size';
-    return;
-  }
-
-  const size = computeOutputSize({
-    sizeMode,
-    quality: qualityPreset,
-    selectedRatio,
-    customWidth,
-    customHeight,
-    refImage
-  });
-  document.getElementById('finalSizeLabel').textContent = `最终尺寸: ${size.width} × ${size.height}`;
-  // Also show validation error if any
+  const label = document.getElementById('finalSizeLabel');
   try {
-    computeOutputSize({ sizeMode: 'custom', quality: qualityPreset, selectedRatio, customWidth, customHeight, refImage: null });
-    document.getElementById('finalSizeLabel').className = 'final-size';
-  } catch {
-    if (sizeMode === 'custom') {
-      document.getElementById('finalSizeLabel').textContent += ' — 尺寸无效';
-      document.getElementById('finalSizeLabel').className = 'final-size invalid';
-    }
+    const size = getOutputSize({
+      sizeMode,
+      aspectRatio,
+      resolutionPreset,
+      customWidth,
+      customHeight,
+      referenceImage: refImage
+    });
+    label.textContent = `最终尺寸：${size.width} × ${size.height}`;
+    label.className = 'final-size';
+  } catch (error) {
+    label.textContent = `最终尺寸：无效 - ${error.message || '尺寸错误'}`;
+    label.className = 'final-size invalid';
   }
 }
 
 function readSizeStateInto(api) {
-  api.sizeMode = sizeMode;
-  api.selectedRatio = selectedRatio;
-  api.quality = qualityPreset;
-  api.customWidth = customWidth || 1024;
-  api.customHeight = customHeight || 1024;
-  // Also set the legacy size string for backward compat
-  if (sizeMode === 'auto' && !refImage) {
-    api.size = 'auto';
-    return;
-  }
+  api.sizeMode = migrateSizeMode(sizeMode);
+  api.aspectRatio = aspectRatio;
+  api.resolutionPreset = migrateResolutionPreset(resolutionPreset);
+  api.customWidth = customWidth || 720;
+  api.customHeight = customHeight || 720;
+  delete api.selectedRatio;
+  delete api.quality;
 
   try {
-    const sz = computeOutputSize({
-      sizeMode, quality: qualityPreset, selectedRatio,
-      customWidth, customHeight, refImage
+    const sz = getOutputSize({
+      sizeMode: api.sizeMode,
+      aspectRatio: api.aspectRatio,
+      resolutionPreset: api.resolutionPreset,
+      customWidth: api.customWidth,
+      customHeight: api.customHeight,
+      referenceImage: refImage
     });
-    api.size = `${sz.width}x${sz.height}`;
+    api.finalWidth = sz.width;
+    api.finalHeight = sz.height;
+    api.size = sz.size;
   } catch {
-    api.size = '1024x1024';
+    api.finalWidth = 720;
+    api.finalHeight = 720;
+    api.size = '720x720';
   }
+}
+
+function getProviderSizeForFormat(outputSize, api = {}) {
+  const format = api.sizeFormat || 'x';
+  if (format === '*') return outputSize.dashscopeSize;
+  if (format === 'openai-mapped') return mapSizeForOpenAIImages(outputSize.size);
+  return outputSize.size;
 }
 
 function bindActions() {
@@ -400,9 +403,47 @@ function bindActions() {
 
     try {
       const url = (api.baseUrl || '').replace(/\/+$/, '') + (api.endpoint || '/v1/images/generations');
+      const outputSize = getOutputSize({
+        sizeMode: api.sizeMode,
+        aspectRatio: api.aspectRatio,
+        resolutionPreset: api.resolutionPreset,
+        customWidth: api.customWidth,
+        customHeight: api.customHeight,
+        referenceImage: null
+      });
+      const providerSize = getProviderSizeForFormat(outputSize, api);
+      if ((api.sizeFormat || 'x') === 'openai-mapped' && providerSize !== outputSize.size) {
+        appendLog({
+          level: 'info',
+          apiType: 'image',
+          event: 'IMAGE_SIZE_MAPPED',
+          provider: api.type,
+          message: `Test image size mapped: ${outputSize.size} -> ${providerSize}`,
+          data: {
+            requestedSize: outputSize.size,
+            providerSize,
+            reason: 'OpenAI-compatible provider only supports fixed image sizes'
+          }
+        });
+      }
+      appendLog({
+        level: 'info',
+        apiType: 'image',
+        event: 'IMAGE_PAYLOAD_SIZE',
+        provider: api.type,
+        message: `Test image payload size: ${providerSize}`,
+        data: {
+          requestedSize: outputSize.size,
+          providerSize,
+          width: outputSize.width,
+          height: outputSize.height,
+          sizeFormat: api.sizeFormat || 'x',
+          provider: api.type
+        }
+      });
       const body = realTest
-        ? { model: api.model, prompt: 'a simple test image', n: 1, size: '256x256' }
-        : { model: api.model, prompt: 'test', n: 1, size: '256x256' };
+        ? { model: api.model, prompt: 'a simple test image', n: 1, size: providerSize }
+        : { model: api.model, prompt: 'test', n: 1, size: providerSize };
 
       const response = await fetch(url, {
         method: 'POST',

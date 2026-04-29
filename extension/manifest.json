@@ -12,9 +12,11 @@
   "permissions": [
     "contextMenus",
     "storage",
+    "sidePanel",
     "activeTab",
     "scripting",
-    "downloads"
+    "downloads",
+    "unlimitedStorage"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -22,6 +24,9 @@
   "background": {
     "service_worker": "src/background.js",
     "type": "module"
+  },
+  "side_panel": {
+    "default_path": "src/sidepanel/sidepanel.html"
   },
   "options_page": "src/options/options.html",
   "content_scripts": [
@@ -32,6 +37,6 @@
     }
   ],
   "action": {
-    "default_title": "PromptPilot — 点击打开浮动窗口"
+    "default_title": "PromptPilot — 点击打开面板"
   }
 }

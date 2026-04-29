@@ -4,22 +4,27 @@ import { buildHeaders, buildUrl, fetchJsonWithTimeout, getByPath, parseTemplateB
 import { ERROR_CODES, createAppError } from '../../utils/errors.js';
 import { normalizeImageResult } from '../../utils/imageResult.js';
 
-export async function callCustomImageApi({ prompt, negativePrompt, referenceImage, settings, defaults = {}, mode, count, width = 1024, height = 1024, debug }) {
-  if (!settings?.baseUrl || !settings?.generateApiPath) return mockImages('custom-image-mock', 4);
+export async function callCustomImageApi({ prompt, negativePrompt, referenceImage, settings, defaults = {}, mode, count, width = 720, height = 720, size, dashscopeSize, outputSize, debug }) {
+  if (!settings?.baseUrl || !settings?.generateApiPath) return mockImages('custom-image-mock', count || 4, outputSize?.width || width, outputSize?.height || height);
 
   const variables = {
+    ...settings,
     model: settings.model || '',
     prompt,
     negativePrompt,
     referenceImage,
-    width,
-    height,
+    width: outputSize?.width || width,
+    height: outputSize?.height || height,
+    size: size || outputSize?.size || `${width}x${height}`,
+    dashscopeSize: dashscopeSize || outputSize?.dashscopeSize || `${width}*${height}`,
+    aspectRatio: outputSize?.aspectRatio || settings.aspectRatio || '',
+    resolutionPreset: outputSize?.resolutionPreset || settings.resolutionPreset || '',
+    sizeMode: outputSize?.sizeMode || settings.sizeMode || '',
     count,
     mode,
     steps: settings.steps || defaults.steps || '',
     cfgScale: settings.cfgScale || defaults.cfgScale || '',
-    seed: settings.seed || defaults.seed || defaults.seedMode || 'random',
-    ...settings
+    seed: settings.seed || defaults.seed || defaults.seedMode || 'random'
   };
 
   const generateUrl = buildUrl(settings.baseUrl, settings.generateApiPath, variables);

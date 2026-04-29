@@ -304,9 +304,14 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .error-actions button { font-size: 12px; border-radius: 999px; }
 .results-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; min-height: 80px; }
 .result-card { background: rgba(0,0,0,.12); border-radius: 18px; overflow: hidden; }
-.result-card img { width: 100%; aspect-ratio: 1 / 1; object-fit: cover; display: block; background: #05080c; border-radius: 18px 18px 4px 4px; }
+.result-card img { width: 100%; height: auto; max-height: 320px; object-fit: contain; display: block; background: #05080c; border-radius: 18px 18px 4px 4px; }
 .result-card-body { padding: 8px; display: grid; gap: 6px; }
 .result-card-title { display: none; }
+.result-size-warning {
+  color: var(--warning);
+  font-size: 11px;
+  line-height: 1.35;
+}
 .result-actions { display: flex; }
 .result-actions button { width: 100%; font-size: 12px; padding: 10px 8px; border-radius: 999px; }
 .result-footer { display: flex; gap: 10px; margin-top: 14px; }
@@ -436,10 +441,10 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 @media (min-width: 560px) {
   .app-shell { padding: 14px 18px; }
   .app-header {
-    grid-template-columns: minmax(240px, .9fr) minmax(340px, 1fr);
+    grid-template-columns: minmax(220px, .76fr) minmax(390px, 1fr);
     align-items: center;
-    padding: 22px 24px;
-    gap: 18px 24px;
+    padding: 18px 22px;
+    gap: 14px 22px;
     border-radius: 22px;
   }
   .app-header > div:first-child {
@@ -467,52 +472,65 @@ button:disabled { opacity: .45; cursor: not-allowed; }
     margin: 6px 0 0 70px;
     font-size: 14px;
   }
-  .header-side { display: contents; }
-  .status-strip {
+  .header-side {
+    display: grid;
     grid-column: 2;
     grid-row: 1;
-    gap: 8px;
+    gap: 10px;
+    padding-top: 0;
+    border-top: 0;
+    min-width: 0;
+  }
+  .status-strip {
+    gap: 6px;
     justify-content: flex-start;
   }
   .status-badge {
-    min-height: 34px;
-    padding: 7px 12px;
-    font-size: 13px;
+    min-height: 28px;
+    padding: 5px 9px;
+    font-size: 11px;
   }
   .header-actions {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    grid-template-columns: minmax(104px, 1.2fr) minmax(104px, 1.2fr) minmax(52px, .55fr) minmax(52px, .55fr);
-    gap: 12px;
-    padding: 16px 20px;
-    border: 1px solid rgba(255,255,255,.07);
-    border-radius: 18px;
-    background: rgba(3,8,15,.28);
+    grid-template-columns: minmax(78px, 1fr) minmax(78px, 1fr) 48px 48px;
+    gap: 8px;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
   }
   .icon-btn {
-    min-height: 56px;
-    border-radius: 14px;
-    font-size: 17px;
+    min-height: 40px;
+    border-radius: 11px;
+    padding: 6px 8px;
+    font-size: 14px;
+    gap: 6px;
+    box-shadow: 0 8px 16px rgba(0,0,0,.18);
+  }
+  .icon-btn::before {
+    width: 22px;
+    height: 22px;
+    font-size: 14px;
   }
 }
 
 @media (min-width: 860px) {
   .app-header {
-    grid-template-columns: minmax(320px, .9fr) minmax(420px, 1fr);
-    padding: 26px 28px;
-    gap: 22px 28px;
+    grid-template-columns: minmax(330px, .78fr) minmax(500px, 1fr);
+    padding: 20px 26px;
+    gap: 16px 26px;
   }
   .app-header > div:first-child {
     padding-right: 28px;
   }
   .header-actions {
-    padding: 20px 24px;
-    gap: 16px;
+    grid-template-columns: minmax(96px, 1fr) minmax(96px, 1fr) 56px 56px;
+    padding: 0;
+    gap: 10px;
   }
   .icon-btn {
-    min-height: 64px;
-    border-radius: 16px;
-    font-size: 19px;
+    min-height: 44px;
+    border-radius: 12px;
+    font-size: 15px;
   }
 }
 

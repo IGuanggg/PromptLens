@@ -27,13 +27,16 @@ export const DEFAULT_SETTINGS = {
     endpoint: '/v1/images/generations',
     apiKey: '',
     model: 'gpt-image-1',
-    size: '1024x1024',
+    size: '720x720',
+    sizeFormat: 'x',
     responseFormat: 'url',
     sizeMode: 'preset',
-    quality: 'standard',
-    selectedRatio: '1:1',
-    customWidth: 1024,
-    customHeight: 1024,
+    aspectRatio: '1:1',
+    resolutionPreset: 'p720',
+    customWidth: 720,
+    customHeight: 720,
+    finalWidth: 720,
+    finalHeight: 720,
     custom: {
       method: 'POST',
       authType: AUTH_TYPES.BEARER,
@@ -53,7 +56,8 @@ export const DEFAULT_SETTINGS = {
     historyLimit: 30,
     savePromptWithImage: true,
     saveResults: true,
-    autoSaveDraft: true
+    autoSaveDraft: true,
+    panelMode: 'docked'
   },
   advanced: {
     enableDebugMode: false,
