@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git push *)",
+      "Bash(gh pr *)",
+      "Bash(ls .github/PULL_REQUEST_TEMPLATE*)",
+      "Bash(git checkout *)",
+      "Bash(git clean *)",
+      "Bash(git reset *)",
+      "Bash(git stash *)",
+      "Bash(git pull *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
+    ]
+  }
+}

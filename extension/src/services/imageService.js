@@ -3,9 +3,11 @@ import { buildHeaders, buildUrl, fetchJsonWithTimeout, mapResponse, parseTemplat
 import { ERROR_CODES, createAppError } from '../utils/errors.js';
 import { normalizeImageResult, normalizeOpenAIImageResult } from '../utils/imageResult.js';
 import { mockImages } from '../utils/mockImages.js';
-import { getOutputSize, mapSizeForOpenAIImages } from '../utils/size.js';
+import { getOutputSize, mapSizeForOpenAIImages, getProviderSize } from '../utils/size.js';
 import { createMultiAnglePrompts } from './anglePromptService.js';
 import { appendLog } from './logService.js';
+import { getImageModelConfig, toApiImageSize, detectAspectRatioFromImage, resolveAspectRatioForNano, validateNanoBananaPayload } from '../data/imageModels.js';
+import { extractTaskId, pollImageResult, normalizeImageTaskFailure } from './imageTaskService.js';
 
 export async function generateImages({
   prompt,
@@ -354,8 +356,124 @@ async function callOpenAICompatibleImage({ api, prompt, count, width, height, si
   return normalizeOpenAIImageResult(raw, 'openai-compatible-image', { width, height });
 }
 
+// ── Draw API: channel-aware submit + async poll ──
+
+async function callDrawApi({ api, prompt, referenceImage, width, height, dashscopeSize, outputSize, modelConfig, settings }) {
+  const baseUrl = (api.baseUrl || '').replace(/\/+$/, '');
+  const submitUrl = `${baseUrl}${modelConfig.submitEndpoint}`;
+  const resultEp = api.resultEndpoint || modelConfig.resultEndpoint || '/v1/draw/result';
+  const channel = modelConfig.channel;
+  const resolutionPreset = outputSize?.resolutionPreset || api.resolutionPreset || '1k';
+
+  // Resolve reference image URLs
+  const refUrl = typeof referenceImage === 'string' ? referenceImage :
+    (referenceImage?.dataUrl || referenceImage?.displayUrl || referenceImage?.url || '');
+  const urls = refUrl ? [refUrl] : [];
+
+  // Build payload per official API doc
+  let payload;
+  if (channel === 'nano-banana') {
+    // Nano Banana: aspectRatio + imageSize (no size field)
+    const imageSize = toApiImageSize(resolutionPreset);
+    // Use outputSize (from getOutputSize) as primary aspect ratio source, with Nano-aware fallback
+    const resolvedAspectRatio = resolveAspectRatioForNano({ settings: settings || {}, currentImage: referenceImage, outputSize });
+    const finalAspectRatio = resolvedAspectRatio || outputSize?.aspectRatio || api.aspectRatio || 'auto';
+
+    // Nano-banana-fast only supports 1K
+    const finalImageSize = api.model === 'nano-banana-fast' ? '1K' : imageSize;
+
+    payload = {
+      model: api.model, prompt,
+      aspectRatio: finalAspectRatio,
+      imageSize: finalImageSize,
+      urls, webHook: '-1', shutProgress: false
+    };
+
+    // Pre-submit validation
+    validateNanoBananaPayload(payload);
+
+    appendLog({ level: 'info', apiType: 'image', event: 'IMAGE_REQUEST_BUILD', provider: 'draw-api', message: `Nano Banana request: ${finalAspectRatio} ${finalImageSize}`,
+      data: { model: api.model, channel, endpoint: submitUrl, sizeMode: api.sizeMode, sourceImageWidth: referenceImage?.width || 0, sourceImageHeight: referenceImage?.height || 0, detectedAspectRatio: finalAspectRatio, aspectRatio: finalAspectRatio, resolutionPreset, imageSize: finalImageSize, urlsCount: urls.length, webHook: '-1' } });
+  } else {
+    // Image channel: aspectRatio + quality (no size, no imageSize)
+    const aspectRatio = outputSize?.sizeMode === 'custom' ? `${width}x${height}` :
+      (outputSize?.aspectRatio || api.aspectRatio || '1:1');
+
+    payload = {
+      model: api.model, prompt,
+      aspectRatio,
+      quality: 'auto',
+      urls, webHook: '-1', shutProgress: false
+    };
+
+    appendLog({ level: 'info', apiType: 'image', event: 'IMAGE_REQUEST_BUILD', provider: 'draw-api', message: `Image request: ${aspectRatio}`,
+      data: { model: api.model, channel, endpoint: submitUrl, aspectRatio, quality: 'auto', urlsCount: urls.length, webHook: '-1' } });
+  }
+
+  // Validate single-model consistency
+  const selectedModel = api.model;
+  if (payload.model !== selectedModel) {
+    throw createAppError({
+      code: ERROR_CODES.MODEL_MISMATCH,
+      message: `模型不一致：选择的是 ${selectedModel}，实际请求是 ${payload.model}`,
+      provider: 'draw-api',
+      raw: { selectedModel, payloadModel: payload.model },
+      retryable: false
+    });
+  }
+
+  // Model-endpoint validation: if user overrides endpoint, verify it matches the model's expected endpoint
+  if (api.customEndpointOverride && api.endpoint && api.endpoint !== modelConfig.submitEndpoint) {
+    appendLog({ level: 'warn', apiType: 'image', event: 'MODEL_ENDPOINT_MISMATCH', provider: 'draw-api', message: `Endpoint mismatch`, data: { model: api.model, channel, endpoint: api.endpoint, expectedEndpoint: modelConfig.submitEndpoint } });
+    throw createAppError({
+      code: ERROR_CODES.MODEL_MISMATCH,
+      message: `当前模型 ${api.model} 与接口 ${api.endpoint} 不匹配。预期接口：${modelConfig.submitEndpoint}。请关闭自定义 Endpoint 或切换正确模型。`,
+      provider: 'draw-api', raw: { model: api.model, endpoint: api.endpoint, expectedEndpoint: modelConfig.submitEndpoint }, retryable: false
+    });
+  }
+
+  appendLog({ level: 'info', apiType: 'image', event: 'IMAGE_MODEL_ROUTE', provider: 'draw-api', message: `Route: ${channel}`, data: { selectedModel, channel, endpoint: submitUrl, resultEndpoint: resultEp, customEndpointOverride: api.customEndpointOverride || false } });
+  appendLog({ level: 'info', apiType: 'image', event: 'IMAGE_PAYLOAD_BUILT', provider: 'draw-api', message: `Payload: ${channel}`, data: { channel, ...payload } });
+
+  // Submit
+  const submitTimeout = 60000;
+  const headers = { 'Content-Type': 'application/json' };
+  if (api.apiKey) headers.Authorization = `Bearer ${api.apiKey}`;
+
+  const submitRaw = await fetchJsonWithTimeout(submitUrl, {
+    method: 'POST', headers, body: JSON.stringify(payload)
+  }, submitTimeout, { apiType: 'image', provider: 'draw-api' });
+
+  const taskId = extractTaskId(submitRaw);
+  if (!taskId) {
+    // Fallback: parse direct result (might have inline images)
+    return normalizeImageResult(submitRaw, 'draw-api', { width, height, requireImages: true });
+  }
+
+  appendLog({ level: 'info', apiType: 'image', event: 'IMAGE_TASK_SUBMITTED', provider: 'draw-api', message: `Task: ${taskId}`, data: { taskId, model: api.model, channel } });
+
+  // Poll
+  const pollResult = await pollImageResult({
+    taskId, baseUrl, resultEndpoint: resultEp,
+    apiKey: api.apiKey,
+    pollIntervalMs: api.pollIntervalMs || 3000,
+    maxPollCount: api.maxPollCount || 240,
+    provider: 'draw-api'
+  });
+
+  return { images: pollResult.images || [], provider: 'draw-api', raw: pollResult.raw || {} };
+}
+
 async function callCustomImage({ api, prompt, negativePrompt, referenceImage, mode, count, width, height, size, dashscopeSize, outputSize, settings }) {
   const custom = api.custom || {};
+
+  // ── Channel-aware routing for known models ──
+  const modelConfig = getImageModelConfig(api.model);
+  if (modelConfig && modelConfig.channel) {
+    return callDrawApi({ api, prompt, referenceImage, width, height, dashscopeSize, outputSize, modelConfig, settings });
+  }
+
+  // ── Legacy custom API flow ──
   if (!api.baseUrl || !api.endpoint) {
     return mockImages('custom-image-mock', count || 4, width, height);
   }
@@ -431,13 +549,9 @@ async function pollCustomImage(initialRaw, api, custom, variables) {
     const status = String(getByPath(raw, responseMap.status || 'status') || '').toLowerCase();
     if (['succeeded', 'success', 'completed', 'done', 'finished'].includes(status)) return raw;
     if (['failed', 'error', 'canceled', 'cancelled'].includes(status)) {
-      throw createAppError({
-        code: ERROR_CODES.TASK_FAILED,
-        message: `Image task failed: ${status}`,
-        provider: 'custom-image',
-        raw,
-        retryable: false
-      });
+      const failureReason = getByPath(raw, responseMap.failureReason || 'failure_reason') || raw?.failure_reason || '';
+      const errorMsg = getByPath(raw, responseMap.error || 'error') || raw?.error || '';
+      throw normalizeImageTaskFailure({ failure_reason: failureReason, error: errorMsg, status }, 'custom-image');
     }
   }
 
@@ -451,12 +565,6 @@ async function pollCustomImage(initialRaw, api, custom, variables) {
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function getProviderSize({ requestedSize, dashscopeSize, sizeFormat }) {
-  if (sizeFormat === '*') return dashscopeSize || requestedSize.replace('x', '*');
-  if (sizeFormat === 'openai-mapped') return mapSizeForOpenAIImages(requestedSize);
-  return requestedSize;
 }
 
 function createFailedAngleResult(angle, prompt, provider, outputSize, error) {

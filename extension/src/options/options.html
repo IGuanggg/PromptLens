@@ -94,9 +94,21 @@
 
             <div class="form-grid">
               <label>Base URL<input name="imageApi.baseUrl" placeholder="https://api.openai.com" /></label>
-              <label>Endpoint<input name="imageApi.endpoint" placeholder="/v1/images/generations" /></label>
+              <label>Endpoint（由模型决定）
+                <input name="imageApi.endpoint" id="imageEndpointInput" placeholder="由模型自动决定" readonly />
+                <span id="endpointPreview" class="field-description"></span>
+                <label class="switch-row" style="margin-top:4px"><input name="imageApi.customEndpointOverride" id="customEndpointOverrideCb" type="checkbox" /> 手动覆盖 Endpoint</label>
+              </label>
               <label>API Key<input name="imageApi.apiKey" type="password" /></label>
-              <label>Model<input name="imageApi.model" placeholder="gpt-image-1" /></label>
+              <label>Model
+                <select name="imageApi.model">
+                  <option value="gpt-image-2-vip">gpt-image-2-vip</option>
+                  <option value="gpt-image-2">gpt-image-2</option>
+                  <option value="nano-banana-pro">nano-banana-pro</option>
+                  <option value="nano-banana-2">nano-banana-2</option>
+                  <option value="nano-banana-fast">nano-banana-fast</option>
+                </select>
+              </label>
             </div>
 
             <h3>参数</h3>

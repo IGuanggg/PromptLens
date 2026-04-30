@@ -57,18 +57,30 @@ function assertImageTaskDidNotFail(raw, provider) {
   const failedStatuses = new Set(['failed', 'error', 'canceled', 'cancelled']);
   if (!failedStatuses.has(status)) return;
 
-  const detail = raw.error ||
-    raw.failure_reason ||
-    raw.message ||
-    raw.data?.error ||
-    raw.data?.failure_reason ||
-    `Image task ${status}`;
+  const failureReason = raw.failure_reason || raw.data?.failure_reason || '';
+  const errorMsg = raw.error || raw.data?.error || raw.message || `Image task ${status}`;
+
+  // Use shared moderation-aware classification
+  // (defined in imageTaskService.js — import at top of file or inline check)
+  if (failureReason === 'output_moderation') {
+    throw createAppError({
+      code: ERROR_CODES.IMAGE_MODERATION_FAILED,
+      message: '图片生成被安全审核拦截，可能是生成结果触发了图像服务的内容安全策略。请修改 Prompt 后重试。',
+      provider, raw, retryable: false
+    });
+  }
+  if (failureReason === 'input_moderation') {
+    throw createAppError({
+      code: ERROR_CODES.IMAGE_INPUT_MODERATION_FAILED,
+      message: '提示词或参考图触发输入审核，请修改 Prompt 或更换参考图后重试。',
+      provider, raw, retryable: false
+    });
+  }
 
   throw createAppError({
     code: ERROR_CODES.TASK_FAILED,
-    message: `图片生成任务失败：${detail}`,
-    provider,
-    raw,
+    message: `图片生成任务失败：${errorMsg}`,
+    provider, raw,
     retryable: false
   });
 }

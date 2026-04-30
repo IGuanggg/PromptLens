@@ -86,10 +86,21 @@ export async function requestJson({ apiType = 'system', provider = '', url, meth
   } catch (error) {
     const elapsedMs = Date.now() - startedAt;
 
-    // Determine error type
+    // Determine error type — check isAbort BEFORE error?.code because
+    // native DOMException AbortError has error.code = 20 (truthy).
     const isAbort = error?.name === 'AbortError';
-    const errorCode = error?.code || (isAbort ? ERROR_CODES.TIMEOUT : ERROR_CODES.NETWORK_ERROR);
-    const errorMessage = error?.message || (isAbort ? '请求超时' : '网络错误');
+    const isAppError = typeof error?.code === 'string' && error?.code;
+    let errorCode, errorMessage;
+    if (isAbort) {
+      errorCode = ERROR_CODES.TIMEOUT;
+      errorMessage = '请求超时，请稍后重试或增大超时时间。';
+    } else if (isAppError) {
+      errorCode = error.code;
+      errorMessage = error.message || '请求失败';
+    } else {
+      errorCode = ERROR_CODES.NETWORK_ERROR;
+      errorMessage = error?.message || '网络错误';
+    }
 
     // ── LOG: error ──
     appendLog({
@@ -118,8 +129,8 @@ export async function requestJson({ apiType = 'system', provider = '', url, meth
       message: errorMessage
     });
 
-    // Re-throw existing app errors
-    if (error?.code) throw error;
+    // Re-throw existing app errors (string code, not DOMException code=20)
+    if (isAppError) throw error;
     if (isAbort) {
       throw createAppError({ code: ERROR_CODES.TIMEOUT, provider, raw: { url }, retryable: true });
     }
@@ -156,15 +167,21 @@ export async function requestFormData({ apiType = 'image', provider = '', url, m
 function parseResponse(text, response) {
   const contentType = (response?.headers?.get?.('content-type') || '').toLowerCase();
 
+  // Try JSON first regardless of Content-Type — some servers return
+  // text/event-stream even for JSON error responses.
+  const trimmed = typeof text === 'string' ? text.trimStart() : '';
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try { return JSON.parse(text); } catch { /* fall through */ }
+  }
+
   // Detect SSE: Content-Type text/event-stream, or body starts with "data:"
-  const isSSE = contentType.includes('text/event-stream') ||
-    (typeof text === 'string' && text.trimStart().startsWith('data:'));
+  const isSSE = contentType.includes('text/event-stream') || trimmed.startsWith('data:');
 
   if (isSSE) {
     return parseSSEStream(text);
   }
 
-  // Standard JSON parse
+  // Standard JSON parse (retry for non-{/[ starts)
   try {
     return JSON.parse(text);
   } catch {

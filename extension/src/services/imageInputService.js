@@ -198,15 +198,30 @@ export async function setImageFromDataUrl(dataUrl, meta = {}) {
  * For blob: URLs, marks as unrecoverable with a warning.
  * For http(s): URLs, leaves it as-is (hotlink protection may apply).
  */
-export function setImageFromUrl(url, meta = {}) {
+export async function setImageFromUrl(url, meta = {}) {
   const isBlob = String(url || '').startsWith('blob:');
   const source = meta.source || (isBlob ? 'blob' : 'url');
+  const displayUrl = meta.dataUrl || (isBlob ? '' : url);
+
+  // Try to capture image dimensions immediately for aspect ratio detection
+  let width = meta.width || 0, height = meta.height || 0;
+  if ((!width || !height) && displayUrl) {
+    try {
+      const dims = await getImageDimensionsSafe(displayUrl);
+      width = dims.width;
+      height = dims.height;
+    } catch { /* ignore */ }
+  }
 
   return {
     ...createImageMeta(source, meta),
     url,
     dataUrl: meta.dataUrl || '',
-    displayUrl: meta.dataUrl || (isBlob ? '' : url),
+    displayUrl,
+    width,
+    height,
+    originalWidth: meta.originalWidth || width,
+    originalHeight: meta.originalHeight || height,
     recoverable: meta.recoverable !== undefined ? meta.recoverable : !isBlob,
     warning: meta.warning
       || (isBlob ? '当前 blob 图片无法直接恢复，请尝试截图粘贴或本地上传' : ''),

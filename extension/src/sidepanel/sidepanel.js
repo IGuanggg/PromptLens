@@ -273,6 +273,48 @@ function setCurrentImage(image) {
   setTaskStatus('idle', '图片已接收，请点击反推');
   renderAll();
   queueSaveDraft();
+  // Save image dimensions as soon as available (may be immediate or after preview loads)
+  scheduleSaveCurrentImageMeta(image);
+}
+
+function scheduleSaveCurrentImageMeta(image) {
+  // Try immediate save if dimensions are already known (upload/paste)
+  const w = Number(image?.width || image?.originalWidth || image?.naturalWidth || 0);
+  const h = Number(image?.height || image?.originalHeight || image?.naturalHeight || 0);
+  if (w > 0 && h > 0) {
+    saveCurrentImageMeta(w, h);
+    return;
+  }
+  // For URL images, wait for the preview <img> to load dimensions
+  const preview = document.getElementById('imagePreview');
+  if (!preview) return;
+  const onLoad = () => {
+    const pw = preview.naturalWidth || 0;
+    const ph = preview.naturalHeight || 0;
+    if (pw > 0 && ph > 0) {
+      // Update state as well
+      if (state.currentImage) {
+        state.currentImage.width = state.currentImage.width || pw;
+        state.currentImage.height = state.currentImage.height || ph;
+        state.currentImage.originalWidth = state.currentImage.originalWidth || pw;
+        state.currentImage.originalHeight = state.currentImage.originalHeight || ph;
+      }
+      saveCurrentImageMeta(pw, ph);
+    }
+    preview.removeEventListener('load', onLoad);
+  };
+  preview.addEventListener('load', onLoad);
+  // Timeout: if already loaded, fire now
+  if (preview.complete && preview.naturalWidth > 0) {
+    onLoad();
+  }
+}
+
+function saveCurrentImageMeta(w, h) {
+  console.log('[PromptPilot] saveCurrentImageMeta', { width: w, height: h });
+  chrome.storage.local.set({
+    currentImageMeta: { width: w, height: h, originalWidth: w, originalHeight: h, updatedAt: Date.now() }
+  }).catch(() => {});
 }
 
 async function clearCurrentImage() {
@@ -283,6 +325,7 @@ async function clearCurrentImage() {
   state.lastError = null;
   state.lastGenerateMode = 'standard';
   await chrome.storage.local.remove('pendingImage');
+  chrome.storage.local.remove('currentImageMeta').catch(() => {});
   await clearDraft();
   setTaskStatus('waiting-image', '等待右键发送图片');
   renderAll();
@@ -417,10 +460,18 @@ async function handleOptimizePrompt(language) {
 // Image generation
 // ════════════════════════════════════════════════════════════════
 
+let _isGenerating = false;
+
 async function handleGenerate() {
   let prompt = $('promptEn').value.trim() || $('promptZh').value.trim();
   if (!prompt) { toast('请先反推或填写提示词'); return; }
   if (!isImageApiAvailable()) { toast('Image API 未连接，请先在设置中完成配置'); return; }
+
+  // Duplicate-click guard: prevent multiple parallel generation requests
+  if (_isGenerating) { console.warn('[PromptPilot] generation already running, ignoring duplicate click'); toast('正在生成中，请等待完成'); return; }
+  _isGenerating = true;
+  $('generateBtn').textContent = '生成中...';
+  $('generateMultiAngleBtn').textContent = '生成中...';
 
   state.settings = await loadSettings();
   setLogSettings(state.settings);
@@ -476,7 +527,8 @@ async function handleGenerate() {
   renderError();
 
   try {
-    const referenceImage = state.currentImage?.dataUrl || state.currentImage?.url || '';
+    // Pass the full image object (dataUrl or displayUrl or url) for reference
+    const referenceImage = state.currentImage?.dataUrl || state.currentImage?.displayUrl || state.currentImage?.url || '';
     const result = await generateImages({
       prompt, negativePrompt: '',
       referenceImage, settings: state.settings, mode, count, width, height, size, dashscopeSize, outputSize
@@ -496,6 +548,10 @@ async function handleGenerate() {
     renderTaskStatus();
     renderError();
     await updateLastCallDisplay();
+  } finally {
+    _isGenerating = false;
+    $('generateBtn').textContent = '生成图片';
+    $('generateMultiAngleBtn').textContent = '生成多角度';
   }
 }
 
@@ -505,6 +561,12 @@ async function handleGenerateMultiAngleImages() {
   const prompt = promptEn || promptZh;
   if (!prompt) { toast('请先反推或填写提示词'); return; }
   if (!isImageApiAvailable()) { toast('Image API 未连接，请先在设置中完成配置'); return; }
+
+  // Duplicate-click guard
+  if (_isGenerating) { console.warn('[PromptPilot] generation already running'); toast('正在生成中，请等待完成'); return; }
+  _isGenerating = true;
+  $('generateBtn').textContent = '生成中...';
+  $('generateMultiAngleBtn').textContent = '生成中...';
 
   state.settings = await loadSettings();
   setLogSettings(state.settings);
@@ -592,6 +654,10 @@ async function handleGenerateMultiAngleImages() {
     renderTaskStatus();
     renderError();
     await updateLastCallDisplay();
+  } finally {
+    _isGenerating = false;
+    $('generateBtn').textContent = '生成图片';
+    $('generateMultiAngleBtn').textContent = '生成多角度';
   }
 }
 
@@ -1001,8 +1067,14 @@ function renderError() {
   $('errorCard').classList.toggle('hidden', !hasError);
   if (!hasError) return;
   const error = state.lastError;
+  const isModeration = error.code === ERROR_CODES.IMAGE_MODERATION_FAILED;
+  const isInputModeration = error.code === ERROR_CODES.IMAGE_INPUT_MODERATION_FAILED;
 
-  $('errorCodeText').textContent = error.code || ERROR_CODES.UNKNOWN_ERROR;
+  // Friendly titles
+  if (isModeration) { $('errorCodeText').textContent = '图片生成被安全审核拦截'; }
+  else if (isInputModeration) { $('errorCodeText').textContent = '输入内容被安全审核拦截'; }
+  else { $('errorCodeText').textContent = error.code || ERROR_CODES.UNKNOWN_ERROR; }
+
   $('errorRetryableText').textContent = error.retryable ? '可重试' : '不可重试';
 
   const httpStatus = error.status || 0;
@@ -1012,7 +1084,11 @@ function renderError() {
     [ERROR_CODES.NETWORK_ERROR, ERROR_CODES.TIMEOUT].includes(error.code);
 
   let msg = error.message || '操作失败';
-  if (shouldUseNoResponseMessage) {
+  if (isModeration) {
+    msg = '图像服务认为生成结果可能违反内容安全策略。\n\n建议：删除具体人物/明星/IP/品牌/艺术家姓名；降低"写实肖像""完全复刻""同款"等表达；改成描述主体、构图、光线、色彩和氛围。\n\n服务商可能已返还积分，请以后台记录为准。';
+  } else if (isInputModeration) {
+    msg = '提示词或参考图可能触发了输入安全策略，请修改 Prompt 或更换参考图。';
+  } else if (shouldUseNoResponseMessage) {
     msg = '请求没有获得有效 HTTP 响应，可能是超时、网络中断、CORS、请求被浏览器取消，或接口耗时过长。';
   } else if (rawStatus || rawReason) {
     msg = `${msg}\n接口状态：${rawStatus || '-'}；原因：${rawReason || '-'}`;

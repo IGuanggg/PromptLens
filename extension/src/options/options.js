@@ -4,7 +4,8 @@ import { clearHistory, createHistoryExportFilename, exportHistory, importHistory
 import { getLogs, clearLogs, getLastCall, initLogService, setLogSettings, setLogLimit } from '../services/logService.js';
 import { appendLog, updateLastCall } from '../services/logService.js';
 import { testPromptTextApi, testPromptVisionApi } from '../services/promptService.js';
-import { RESOLUTION_PRESETS, getOutputSize, mapSizeForOpenAIImages, migrateResolutionPreset, migrateSizeMode } from '../utils/size.js';
+import { RATIO_OPTIONS, getOutputSize, mapSizeForOpenAIImages, migrateResolutionPreset, migrateSizeMode } from '../utils/size.js';
+import { getSubmitEndpointForModel, getResultEndpointForModel } from '../data/imageModels.js';
 
 const form = document.getElementById('settingsForm');
 const saveStatus = document.getElementById('saveStatus');
@@ -37,12 +38,22 @@ async function init() {
   await initLogService(settings);
   setLogSettings(settings);
   setLogLimit(settings?.advanced?.debugLogLimit || 200);
+
+  // Load current image meta for "follow-reference" size preview
+  try {
+    const stored = await chrome.storage.local.get('currentImageMeta');
+    if (stored.currentImageMeta?.width && stored.currentImageMeta?.height) {
+      refImage = { width: stored.currentImageMeta.width, height: stored.currentImageMeta.height };
+    }
+  } catch { /* ignore */ }
+
   bindTabs();
   bindActions();
   bindCustomFields();
   bindSizeControl();
   loadSizeState(settings);
   fillForm(settings);
+  updateEndpointFromModel();
   renderLastCall();
   form.addEventListener('submit', (event) => event.preventDefault());
 }
@@ -97,7 +108,6 @@ function loadSizeState(s) {
 
   updateSizePanelVisibility();
   updateFinalSize();
-  updateResolutionDescription();
 }
 
 function bindSizeControl() {
@@ -119,13 +129,8 @@ function bindSizeControl() {
 
   document.getElementById('resolutionPreset').addEventListener('change', (e) => {
     resolutionPreset = migrateResolutionPreset(e.target.value);
-    e.target.value = resolutionPreset;
-    updateResolutionDescription();
     updateFinalSize();
   });
-
-  document.querySelector('[name="imageApi.sizeFormat"]')?.addEventListener('change', updateFinalSize);
-  document.getElementById('imageApiType')?.addEventListener('change', updateFinalSize);
 
   document.getElementById('customWidth').addEventListener('input', () => {
     customWidth = parseInt(document.getElementById('customWidth').value, 10) || 0;
@@ -136,6 +141,39 @@ function bindSizeControl() {
     customHeight = parseInt(document.getElementById('customHeight').value, 10) || 0;
     updateFinalSize();
   });
+
+  // ── Model → Endpoint sync ──
+  bindEndpointSync();
+}
+
+// ── Model-Endpoint coupling ──
+
+function bindEndpointSync() {
+  const modelSelect = document.querySelector('[name="imageApi.model"]');
+  const overrideCb = document.getElementById('customEndpointOverrideCb');
+  if (!modelSelect) return;
+
+  modelSelect.addEventListener('change', updateEndpointFromModel);
+  if (overrideCb) overrideCb.addEventListener('change', updateEndpointFromModel);
+}
+
+function updateEndpointFromModel() {
+  const modelSelect = document.querySelector('[name="imageApi.model"]');
+  const modelName = modelSelect?.value || 'gpt-image-2';
+  const submitEp = getSubmitEndpointForModel(modelName);
+  const resultEp = getResultEndpointForModel(modelName);
+  const input = document.getElementById('imageEndpointInput');
+  const preview = document.getElementById('endpointPreview');
+  const overrideCb = document.getElementById('customEndpointOverrideCb');
+  const isOverride = overrideCb?.checked || false;
+
+  if (input) {
+    if (!isOverride) input.value = submitEp;
+    input.readOnly = !isOverride;
+  }
+  if (preview) {
+    preview.textContent = `提交：${submitEp} | 结果：${resultEp}`;
+  }
 }
 
 function updateSizePanelVisibility() {
@@ -147,7 +185,6 @@ function updateSizePanelVisibility() {
 
 function updateFinalSize() {
   const label = document.getElementById('finalSizeLabel');
-  const hint = document.getElementById('sizeCompatibilityHint');
   try {
     const size = getOutputSize({
       sizeMode,
@@ -159,18 +196,10 @@ function updateFinalSize() {
     });
     label.textContent = `最终尺寸：${size.width} × ${size.height}`;
     label.className = 'final-size';
-    hint?.classList.toggle('hidden', !shouldShowCompatibilityHint(size, getCurrentImageApiDraft()));
   } catch (error) {
     label.textContent = `最终尺寸：无效 - ${error.message || '尺寸错误'}`;
     label.className = 'final-size invalid';
-    hint?.classList.add('hidden');
   }
-}
-
-function updateResolutionDescription() {
-  const description = document.getElementById('resolutionDescription');
-  if (!description) return;
-  description.textContent = RESOLUTION_PRESETS[resolutionPreset]?.description || RESOLUTION_PRESETS['1k'].description;
 }
 
 function readSizeStateInto(api) {
@@ -201,20 +230,6 @@ function readSizeStateInto(api) {
   }
 }
 
-function getCurrentImageApiDraft() {
-  return {
-    type: document.getElementById('imageApiType')?.value || settings?.imageApi?.type || '',
-    sizeFormat: document.querySelector('[name="imageApi.sizeFormat"]')?.value || settings?.imageApi?.sizeFormat || 'x'
-  };
-}
-
-function shouldShowCompatibilityHint(outputSize, api = {}) {
-  if ((api.sizeFormat || 'x') === 'openai-mapped' && mapSizeForOpenAIImages(outputSize.size) !== outputSize.size) {
-    return true;
-  }
-  return false;
-}
-
 function getProviderSizeForFormat(outputSize, api = {}) {
   const format = api.sizeFormat || 'x';
   if (format === '*') return outputSize.dashscopeSize;
@@ -225,7 +240,7 @@ function getProviderSizeForFormat(outputSize, api = {}) {
 function bindActions() {
   document.getElementById('saveBtn').addEventListener('click', async () => {
     settings = readForm();
-    settings = await saveSettings(settings);
+    await saveSettings(settings);
     setLogSettings(settings);
     setLogLimit(settings?.advanced?.debugLogLimit || 200);
 
@@ -427,12 +442,7 @@ function bindActions() {
       apiType: 'image',
       event: 'TEST_IMAGE_API',
       provider: api.type,
-      message: `手动测试 Image API 配置${realTest ? ' (真实出图)' : ''}`,
-      data: {
-        sizeMode: api.sizeMode,
-        aspectRatio: api.aspectRatio,
-        resolutionPreset: api.resolutionPreset
-      }
+      message: `手动测试 Image API 配置${realTest ? ' (真实出图)' : ''}`
     });
 
     try {
@@ -456,7 +466,7 @@ function bindActions() {
           data: {
             requestedSize: outputSize.size,
             providerSize,
-            reason: 'Provider only supports fixed image sizes'
+            reason: 'OpenAI-compatible provider only supports fixed image sizes'
           }
         });
       }
@@ -471,9 +481,6 @@ function bindActions() {
           providerSize,
           width: outputSize.width,
           height: outputSize.height,
-          aspectRatio: outputSize.aspectRatio,
-          resolutionPreset: outputSize.resolutionPreset,
-          sizeMode: outputSize.sizeMode,
           sizeFormat: api.sizeFormat || 'x',
           provider: api.type
         }
