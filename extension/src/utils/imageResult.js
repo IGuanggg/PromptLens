@@ -2,6 +2,8 @@ import { ERROR_CODES, createAppError } from './errors.js';
 import { getByPath, normalizeImagesFromResponse } from './objectPath.js';
 
 export function normalizeImageResult(raw, provider, options = {}) {
+  assertImageTaskDidNotFail(raw, provider);
+
   const width = Number(options.width || 0);
   const height = Number(options.height || 0);
   const labels = options.labels || ['参考风格', '创意变体', '结构草图', '线稿风格'];
@@ -31,6 +33,8 @@ export function normalizeImageResult(raw, provider, options = {}) {
 }
 
 export function normalizeOpenAIImageResult(raw, provider, options = {}) {
+  assertImageTaskDidNotFail(raw, provider);
+
   const result = normalizeImageResult(raw, provider, {
     ...options,
     responseMap: options.responseMap || { images: 'data' }
@@ -44,6 +48,29 @@ export function normalizeOpenAIImageResult(raw, provider, options = {}) {
     });
   }
   return result;
+}
+
+function assertImageTaskDidNotFail(raw, provider) {
+  if (!raw || typeof raw !== 'object') return;
+
+  const status = String(raw.status || raw.data?.status || '').toLowerCase();
+  const failedStatuses = new Set(['failed', 'error', 'canceled', 'cancelled']);
+  if (!failedStatuses.has(status)) return;
+
+  const detail = raw.error ||
+    raw.failure_reason ||
+    raw.message ||
+    raw.data?.error ||
+    raw.data?.failure_reason ||
+    `Image task ${status}`;
+
+  throw createAppError({
+    code: ERROR_CODES.TASK_FAILED,
+    message: `图片生成任务失败：${detail}`,
+    provider,
+    raw,
+    retryable: false
+  });
 }
 
 export function normalizeReplicateResult(raw, provider, options = {}) {

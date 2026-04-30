@@ -306,7 +306,27 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .result-card { background: rgba(0,0,0,.12); border-radius: 18px; overflow: hidden; }
 .result-card img { width: 100%; height: auto; max-height: 320px; object-fit: contain; display: block; background: #05080c; border-radius: 18px 18px 4px 4px; }
 .result-card-body { padding: 8px; display: grid; gap: 6px; }
-.result-card-title { display: none; }
+.result-card-title {
+  display: block;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 750;
+}
+.result-failed-placeholder {
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  padding: 18px;
+  text-align: center;
+  color: var(--muted);
+  background: rgba(255,92,122,.08);
+  border: 1px solid rgba(255,92,122,.34);
+  border-radius: 18px 18px 4px 4px;
+}
+.result-failed-placeholder strong { color: var(--text); }
+.result-failed-placeholder span { color: var(--danger); font-size: 13px; }
+.result-failed-placeholder small { text-align: center; }
 .result-size-warning {
   color: var(--warning);
   font-size: 11px;

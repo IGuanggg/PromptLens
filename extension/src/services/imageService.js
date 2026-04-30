@@ -4,6 +4,7 @@ import { ERROR_CODES, createAppError } from '../utils/errors.js';
 import { normalizeImageResult, normalizeOpenAIImageResult } from '../utils/imageResult.js';
 import { mockImages } from '../utils/mockImages.js';
 import { getOutputSize, mapSizeForOpenAIImages } from '../utils/size.js';
+import { createMultiAnglePrompts } from './anglePromptService.js';
 import { appendLog } from './logService.js';
 
 export async function generateImages({
@@ -100,10 +101,206 @@ export async function generateImages({
       apiType: 'image',
       event: 'IMAGE_GENERATE_ERROR',
       provider: type,
-      message: `生成失败: ${error?.message || '未知错误'}`
+      message: `生成失败: ${error?.message || '未知错误'}`,
+      data: {
+        code: error?.code || '',
+        status: error?.status || 0,
+        provider: error?.provider || type,
+        rawStatus: error?.raw?.status || '',
+        rawError: error?.raw?.error || error?.raw?.failure_reason || ''
+      }
     });
     throw error;
   }
+}
+
+export async function generateMultiAngleImages({
+  prompt = '',
+  promptZh = '',
+  promptEn = '',
+  negativePrompt = '',
+  referenceImage = '',
+  extraPrompt = '',
+  settings = {},
+  outputSize = null
+}) {
+  const api = settings?.imageApi || {};
+  const provider = api.type || IMAGE_API_TYPES.OPENAI_COMPATIBLE;
+  const finalOutputSize = outputSize || getOutputSize({
+    sizeMode: api.sizeMode,
+    aspectRatio: api.aspectRatio,
+    resolutionPreset: api.resolutionPreset,
+    customWidth: api.customWidth,
+    customHeight: api.customHeight,
+    referenceImage
+  });
+
+  appendLog({
+    level: 'info',
+    apiType: 'image',
+    event: 'MULTI_ANGLE_GENERATE_START',
+    provider,
+    message: `Multi-angle generation start: ${finalOutputSize.size}`,
+    data: {
+      requestedSize: finalOutputSize.size,
+      width: finalOutputSize.width,
+      height: finalOutputSize.height,
+      aspectRatio: finalOutputSize.aspectRatio,
+      resolutionPreset: finalOutputSize.resolutionPreset
+    }
+  });
+
+  const anglePrompts = createMultiAnglePrompts({
+    basePrompt: prompt,
+    promptZh,
+    promptEn,
+    referenceImage,
+    extraPrompt
+  });
+
+  appendLog({
+    level: 'info',
+    apiType: 'image',
+    event: 'MULTI_ANGLE_PROMPT_CREATED',
+    provider,
+    message: 'Created multi-angle prompts',
+    data: {
+      count: anglePrompts.length,
+      angles: anglePrompts.map((item) => item.key)
+    }
+  });
+
+  const images = [];
+  const raw = {};
+
+  for (const angle of anglePrompts) {
+    const anglePrompt = angle.anglePromptEn || angle.anglePromptZh;
+    appendLog({
+      level: 'info',
+      apiType: 'image',
+      event: 'MULTI_ANGLE_IMAGE_START',
+      provider,
+      message: `Generating ${angle.label}`,
+      data: {
+        angleKey: angle.key,
+        label: angle.label,
+        promptPreview: anglePrompt.slice(0, 240),
+        requestedSize: finalOutputSize.size,
+        provider
+      }
+    });
+
+    try {
+      const result = await generateImages({
+        prompt: anglePrompt,
+        negativePrompt,
+        referenceImage,
+        mode: 'multi-angle',
+        count: 1,
+        width: finalOutputSize.width,
+        height: finalOutputSize.height,
+        size: finalOutputSize.size,
+        dashscopeSize: finalOutputSize.dashscopeSize,
+        outputSize: finalOutputSize,
+        settings
+      });
+      const image = (result.images || [])[0];
+      if (!image) throw new Error(`${angle.label} 未返回图片`);
+
+      images.push({
+        ...image,
+        label: angle.label,
+        angleKey: angle.key,
+        prompt: anglePrompt
+      });
+      raw[angle.key] = result.raw || null;
+
+      appendLog({
+        level: 'info',
+        apiType: 'image',
+        event: 'MULTI_ANGLE_IMAGE_SUCCESS',
+        provider,
+        message: `${angle.label} generated`,
+        data: {
+          angleKey: angle.key,
+          label: angle.label,
+          requestedSize: finalOutputSize.size,
+          provider
+        }
+      });
+    } catch (error) {
+      const failed = createFailedAngleResult(angle, anglePrompt, provider, finalOutputSize, error);
+      images.push(failed);
+      raw[angle.key] = serializeAngleError(error);
+
+      appendLog({
+        level: 'error',
+        success: false,
+        apiType: 'image',
+        event: 'MULTI_ANGLE_IMAGE_ERROR',
+        provider,
+        message: `${angle.label} failed: ${error?.message || 'unknown error'}`,
+        data: {
+          angleKey: angle.key,
+          label: angle.label,
+          promptPreview: anglePrompt.slice(0, 240),
+          requestedSize: finalOutputSize.size,
+          provider
+        }
+      });
+    }
+  }
+
+  const failedCount = images.filter((image) => image.failed).length;
+  const successCount = images.length - failedCount;
+  appendLog({
+    level: failedCount ? 'warn' : 'info',
+    success: failedCount === 0,
+    apiType: 'image',
+    event: failedCount ? 'MULTI_ANGLE_GENERATE_ERROR' : 'MULTI_ANGLE_GENERATE_SUCCESS',
+    provider,
+    message: failedCount ? `Multi-angle completed with ${failedCount} failed` : 'Multi-angle generation completed',
+    data: {
+      requestedSize: finalOutputSize.size,
+      successCount,
+      failedCount,
+      angles: images.map((image) => ({ angleKey: image.angleKey, label: image.label, failed: !!image.failed }))
+    }
+  });
+
+  if (successCount === 0) {
+    const hint = createMultiAngleFailureHint({ api, outputSize: finalOutputSize });
+    throw createAppError({
+      code: ERROR_CODES.TASK_FAILED,
+      message: hint ? `多角度生成全部失败。${hint}` : '多角度生成全部失败',
+      provider,
+      raw: {
+        requestedSize: finalOutputSize.size,
+        providerSize: getProviderSize({
+          requestedSize: finalOutputSize.size,
+          dashscopeSize: finalOutputSize.dashscopeSize,
+          sizeFormat: api.sizeFormat || 'x'
+        }),
+        sizeFormat: api.sizeFormat || 'x',
+        hint,
+        failedCount,
+        angles: images.map((image) => ({
+          angleKey: image.angleKey,
+          label: image.label,
+          errorMessage: image.errorMessage || ''
+        })),
+        responses: raw
+      },
+      retryable: false
+    });
+  }
+
+  return {
+    images,
+    provider,
+    mode: 'multi-angle',
+    raw
+  };
 }
 
 // ── Provider implementations ──
@@ -260,4 +457,44 @@ function getProviderSize({ requestedSize, dashscopeSize, sizeFormat }) {
   if (sizeFormat === '*') return dashscopeSize || requestedSize.replace('x', '*');
   if (sizeFormat === 'openai-mapped') return mapSizeForOpenAIImages(requestedSize);
   return requestedSize;
+}
+
+function createFailedAngleResult(angle, prompt, provider, outputSize, error) {
+  return {
+    id: `failed_${angle.key}_${Date.now()}`,
+    url: '',
+    thumbUrl: '',
+    label: angle.label,
+    angleKey: angle.key,
+    provider,
+    width: outputSize.width,
+    height: outputSize.height,
+    prompt,
+    failed: true,
+    errorMessage: error?.message || '该角度生成失败'
+  };
+}
+
+function serializeAngleError(error) {
+  return {
+    error: error?.message || 'unknown error',
+    code: error?.code || '',
+    status: Number(error?.status || 0),
+    rawStatus: error?.raw?.status || error?.raw?.data?.status || '',
+    rawError: error?.raw?.error || error?.raw?.failure_reason || error?.raw?.message || error?.raw?.data?.error || error?.raw?.data?.failure_reason || ''
+  };
+}
+
+function createMultiAngleFailureHint({ api, outputSize }) {
+  const sizeFormat = api.sizeFormat || 'x';
+  if (api.type !== IMAGE_API_TYPES.CUSTOM && sizeFormat !== 'openai-mapped') {
+    const mapped = mapSizeForOpenAIImages(outputSize.size);
+    if (mapped !== outputSize.size) {
+      return `当前请求尺寸为 ${outputSize.size}，OpenAI 兼容接口通常不支持该尺寸；请在设置中把 Image API 的 Size Format 改为 OpenAI mapped，或改用 720p/1:1 后重试。`;
+    }
+  }
+  if (sizeFormat === 'openai-mapped' && outputSize.resolutionPreset === 'p1080') {
+    return '当前为 1080p 多角度连续生成，请尝试切换到 720p 或确认模型支持竖版图像生成。';
+  }
+  return '';
 }

@@ -195,7 +195,7 @@ function buildEntry(raw) {
     method: raw.method || '',
     status: raw.status || 0,
     durationMs: raw.durationMs || 0,
-    success: raw.success !== false,
+    success: raw.success === undefined ? raw.level !== 'error' : raw.success !== false,
     message: raw.message || '',
     requestPreview,
     responsePreview,

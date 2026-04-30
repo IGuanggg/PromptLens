@@ -1,7 +1,7 @@
 ﻿import { loadSettings } from '../services/storageService.js';
 import { checkPromptApiStatus, checkImageApiStatus } from '../adapters/status/healthCheck.js';
 import { generatePromptFromImage, enhancePrompt } from '../services/promptService.js';
-import { generateImages } from '../services/imageService.js';
+import { generateImages, generateMultiAngleImages } from '../services/imageService.js';
 import { downloadImage, downloadAllImages } from '../services/downloadService.js';
 import { clearDraft, restoreDraft, saveDraft } from '../services/draftService.js';
 import { clearHistory, createHistoryExportFilename, createHistoryItemFromState, deleteHistoryItem, exportHistory, getHistory, importHistory, saveHistoryItem } from '../services/historyService.js';
@@ -23,7 +23,7 @@ const state = {
   results: [],
   generateSettings: {},
   lastError: null,
-  lastGenerateForceMixed: false,
+  lastGenerateMode: 'standard',
   settings: null,
   taskStatus: { phase: 'waiting-image', message: '等待右键发送图片' },
   historyItems: [],
@@ -68,12 +68,12 @@ function bindEvents() {
   $('copyEnBtn').addEventListener('click', () => copyText($('promptEn').value, '已复制英文提示词'));
   $('saveHistoryBtn').addEventListener('click', handleManualSaveHistory);
   $('generateBtn').addEventListener('click', () => handleGenerate(false));
-  $('generateMixedBtn').addEventListener('click', () => handleGenerate(true));
+  $('generateMultiAngleBtn').addEventListener('click', handleGenerateMultiAngleImages);
   $('downloadAllBtn').addEventListener('click', () => handleDownloadAll());
-  $('regenerateBtn').addEventListener('click', () => handleGenerate(state.lastGenerateForceMixed));
+  $('regenerateBtn').addEventListener('click', handleRegenerate);
   $('copyErrorBtn').addEventListener('click', handleCopyError);
   $('viewLogsFromErrorBtn').addEventListener('click', openDebugDrawer);
-  $('retryGenerateBtn').addEventListener('click', () => handleGenerate(state.lastGenerateForceMixed));
+  $('retryGenerateBtn').addEventListener('click', handleRegenerate);
   $('errorOptionsBtn').addEventListener('click', () => chrome.runtime.openOptionsPage());
   $('openHistoryBtn').addEventListener('click', openHistoryModal);
   $('closeHistoryBtn').addEventListener('click', closeHistoryModal);
@@ -247,6 +247,7 @@ async function loadDraft() {
   state.prompts = { ...createEmptyPrompts(), ...(draft.prompts || {}) };
   state.results = draft.results || [];
   state.generateSettings = draft.generateSettings || {};
+  state.lastGenerateMode = state.generateSettings?.mode === 'multi-angle' ? 'multi-angle' : 'standard';
   state.extraInstruction = draft.extraInstruction || '';
   state.userExtraPrompt = draft.userExtraPrompt || '';
   state.taskStatus = { phase: 'restored', message: '已恢复上次草稿' };
@@ -268,7 +269,7 @@ function setCurrentImage(image) {
   state.results = [];
   state.generateSettings = {};
   state.lastError = null;
-  state.lastGenerateForceMixed = false;
+  state.lastGenerateMode = 'standard';
   setTaskStatus('idle', '图片已接收，请点击反推');
   renderAll();
   queueSaveDraft();
@@ -280,7 +281,7 @@ async function clearCurrentImage() {
   state.results = [];
   state.generateSettings = {};
   state.lastError = null;
-  state.lastGenerateForceMixed = false;
+  state.lastGenerateMode = 'standard';
   await chrome.storage.local.remove('pendingImage');
   await clearDraft();
   setTaskStatus('waiting-image', '等待右键发送图片');
@@ -416,7 +417,7 @@ async function handleOptimizePrompt(language) {
 // Image generation
 // ════════════════════════════════════════════════════════════════
 
-async function handleGenerate(forceMixed) {
+async function handleGenerate() {
   let prompt = $('promptEn').value.trim() || $('promptZh').value.trim();
   if (!prompt) { toast('请先反推或填写提示词'); return; }
   if (!isImageApiAvailable()) { toast('Image API 未连接，请先在设置中完成配置'); return; }
@@ -428,8 +429,8 @@ async function handleGenerate(forceMixed) {
   const extra = (state.userExtraPrompt || '').trim();
   if (extra) prompt = `${prompt} ${extra}`;
 
-  const mode = forceMixed ? 'mixed' : 'standard';
-  const count = forceMixed ? 4 : 4;
+  const mode = 'standard';
+  const count = 4;
 
   // Compute output size from settings
   const api = state.settings?.imageApi || {};
@@ -481,7 +482,7 @@ async function handleGenerate(forceMixed) {
       referenceImage, settings: state.settings, mode, count, width, height, size, dashscopeSize, outputSize
     });
     state.results = result.images || [];
-    state.lastGenerateForceMixed = forceMixed;
+    state.lastGenerateMode = mode;
     state.lastError = null;
     setTaskStatus('success', '生成完成');
     await persistCurrentHistory();
@@ -496,6 +497,108 @@ async function handleGenerate(forceMixed) {
     renderError();
     await updateLastCallDisplay();
   }
+}
+
+async function handleGenerateMultiAngleImages() {
+  const promptEn = $('promptEn').value.trim();
+  const promptZh = $('promptZh').value.trim();
+  const prompt = promptEn || promptZh;
+  if (!prompt) { toast('请先反推或填写提示词'); return; }
+  if (!isImageApiAvailable()) { toast('Image API 未连接，请先在设置中完成配置'); return; }
+
+  state.settings = await loadSettings();
+  setLogSettings(state.settings);
+
+  const api = state.settings?.imageApi || {};
+  const refImg = state.currentImage;
+  const previewImg = $('imagePreview');
+  const refWidth = refImg?.width || refImg?.originalWidth || previewImg?.naturalWidth || 0;
+  const refHeight = refImg?.height || refImg?.originalHeight || previewImg?.naturalHeight || 0;
+  const sizeMode = migrateSizeMode(api.sizeMode || 'preset');
+  const aspectRatio = api.aspectRatio || api.selectedRatio || '1:1';
+  const resolutionPreset = migrateResolutionPreset(api.resolutionPreset || api.quality);
+  const outputSize = getOutputSize({
+    sizeMode,
+    aspectRatio,
+    resolutionPreset,
+    customWidth: api.customWidth || 720,
+    customHeight: api.customHeight || 720,
+    referenceImage: refWidth && refHeight ? { width: refWidth, height: refHeight } : null
+  });
+
+  state.generateSettings = {
+    mode: 'multi-angle',
+    generateMode: 'multi-angle',
+    count: 4,
+    width: outputSize.width,
+    height: outputSize.height,
+    size: outputSize.size,
+    dashscopeSize: outputSize.dashscopeSize,
+    sizeMode: outputSize.sizeMode,
+    aspectRatio: outputSize.aspectRatio,
+    resolutionPreset: outputSize.resolutionPreset,
+    generationMeta: {
+      mode: 'multi-angle',
+      angles: ['reference', 'side', 'back', 'top']
+    }
+  };
+
+  appendLog({
+    level: 'info',
+    apiType: 'image',
+    event: 'MULTI_ANGLE_GENERATE_START',
+    provider: api.type || 'openai-compatible-image',
+    message: `Start multi-angle generation: ${outputSize.size}`,
+    data: {
+      requestedSize: outputSize.size,
+      width: outputSize.width,
+      height: outputSize.height,
+      aspectRatio: outputSize.aspectRatio,
+      resolutionPreset: outputSize.resolutionPreset
+    }
+  });
+
+  setTaskStatus('generating', '正在生成多角度图像...');
+  state.lastError = null;
+  renderTaskStatus();
+  renderError();
+
+  try {
+    const referenceImage = state.currentImage?.dataUrl || state.currentImage?.displayUrl || state.currentImage?.url || '';
+    const result = await generateMultiAngleImages({
+      prompt,
+      promptZh,
+      promptEn,
+      negativePrompt: '',
+      referenceImage,
+      extraPrompt: state.userExtraPrompt || '',
+      settings: state.settings,
+      outputSize
+    });
+    state.results = result.images || [];
+    state.lastGenerateMode = 'multi-angle';
+    state.lastError = null;
+    const failedCount = state.results.filter((image) => image.failed).length;
+    setTaskStatus('success', failedCount ? '多角度生成完成，部分失败' : '多角度生成完成');
+    await persistCurrentHistory();
+    await updateLastCallDisplay();
+    queueSaveDraft();
+    renderAll();
+  } catch (error) {
+    state.lastError = normalizeError(error);
+    setTaskStatus('error', getErrorMessage(error, '多角度生成失败'));
+    toast(state.taskStatus.message);
+    renderTaskStatus();
+    renderError();
+    await updateLastCallDisplay();
+  }
+}
+
+function handleRegenerate() {
+  if (state.lastGenerateMode === 'multi-angle') {
+    return handleGenerateMultiAngleImages();
+  }
+  return handleGenerate(false);
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -628,7 +731,9 @@ async function handleExportDebugLogs() {
 
 async function handleDownloadAll() {
   if (!state.results.length) return;
-  const results = await downloadAllImages(state.results);
+  const downloadable = state.results.filter((image) => !image.failed && (image.url || image.thumbUrl));
+  if (!downloadable.length) { toast('没有可下载的生成结果'); return; }
+  const results = await downloadAllImages(downloadable);
   const failed = results.find((item) => !item.success);
   if (failed) { state.lastError = failed.error; renderError(); toast('部分图片下载失败'); }
   else { toast('已开始下载全部图片'); }
@@ -686,8 +791,9 @@ function renderHistoryList() {
     row.querySelector('[data-action="delete"]').addEventListener('click', () => handleDeleteHistoryItem(item.id));
     row.querySelector('[data-action="copy-en"]').addEventListener('click', () => copyText(item.prompts?.en || '', '已复制英文提示词'));
     row.querySelector('[data-action="download"]').addEventListener('click', async () => {
-      if (!item.results?.length) return toast('该记录没有生成结果');
-      await downloadAllImages(item.results);
+      const downloadable = (item.results || []).filter((image) => !image.failed && (image.url || image.thumbUrl));
+      if (!downloadable.length) return toast('该记录没有可下载的生成结果');
+      await downloadAllImages(downloadable);
       toast('已开始下载历史结果');
     });
     wrap.appendChild(row);
@@ -710,7 +816,8 @@ function getFilteredHistory() {
 function restoreHistoryItem(item) {
   state.currentImage = normalizeImageInput(item.image || {});
   state.prompts = { ...createEmptyPrompts(), ...(item.prompts || {}) };
-  state.generateSettings = item.generateSettings || {};
+  state.generateSettings = { ...(item.generateSettings || {}), generationMeta: item.generationMeta || item.generateSettings?.generationMeta || null };
+  state.lastGenerateMode = state.generateSettings?.mode === 'multi-angle' ? 'multi-angle' : 'standard';
   state.results = item.results || [];
   state.lastError = null;
   if (item.templateMeta) {
@@ -832,8 +939,14 @@ function renderResults() {
   $('resultsGrid').innerHTML = '';
   state.results.forEach((image, index) => {
     const card = document.createElement('article');
-    card.className = 'result-card';
-    card.innerHTML = `<img src="${image.url || image.thumbUrl}" alt="${image.label || `结果 ${index + 1}`}"><div class="result-card-body"><div class="result-card-title">${image.label || `结果 ${index + 1}`}</div><div class="result-size-warning hidden">输出比例与设置不一致，可能是当前模型或接口不支持该尺寸。</div><div class="result-actions"><button class="secondary-btn" data-action="download">下载图片 ${index + 1}</button></div></div>`;
+    card.className = `result-card${image.failed ? ' failed' : ''}`;
+    const label = image.label || `结果 ${index + 1}`;
+    if (image.failed) {
+      card.innerHTML = `<div class="result-failed-placeholder"><strong>${escapeHtml(label)}</strong><span>该角度生成失败</span><small>${escapeHtml(image.errorMessage || '')}</small></div>`;
+      $('resultsGrid').appendChild(card);
+      return;
+    }
+    card.innerHTML = `<img src="${image.url || image.thumbUrl}" alt="${escapeAttr(label)}"><div class="result-card-body"><div class="result-card-title">${escapeHtml(label)}</div><div class="result-size-warning hidden">输出比例与设置不一致，可能是当前模型或接口不支持该尺寸。</div><div class="result-actions"><button class="secondary-btn" data-action="download">下载图片 ${index + 1}</button></div></div>`;
     const imgEl = card.querySelector('img');
     imgEl.addEventListener('load', async () => {
       const actual = await getImageNaturalSize(imgEl.src);
@@ -891,15 +1004,21 @@ function renderError() {
   $('errorCodeText').textContent = error.code || ERROR_CODES.UNKNOWN_ERROR;
   $('errorRetryableText').textContent = error.retryable ? '可重试' : '不可重试';
 
-  // HTTP 0 special message
   const httpStatus = error.status || 0;
+  const rawStatus = error.raw?.status || error.raw?.data?.status || '';
+  const rawReason = error.raw?.error || error.raw?.failure_reason || error.raw?.message || error.raw?.data?.error || error.raw?.data?.failure_reason || '';
+  const shouldUseNoResponseMessage = httpStatus === 0 &&
+    [ERROR_CODES.NETWORK_ERROR, ERROR_CODES.TIMEOUT].includes(error.code);
+
   let msg = error.message || '操作失败';
-  if (httpStatus === 0) {
+  if (shouldUseNoResponseMessage) {
     msg = '请求没有获得有效 HTTP 响应，可能是超时、网络中断、CORS、请求被浏览器取消，或接口耗时过长。';
+  } else if (rawStatus || rawReason) {
+    msg = `${msg}\n接口状态：${rawStatus || '-'}；原因：${rawReason || '-'}`;
   }
   $('errorMessageText').textContent = msg;
   $('errorProviderText').textContent = `Provider: ${error.provider || '-'}`;
-  $('errorStatusText').textContent = httpStatus === 0 ? 'HTTP: 0 (无响应)' : `HTTP: ${httpStatus}`;
+  $('errorStatusText').textContent = httpStatus === 0 ? 'HTTP: 0（接口未返回 HTTP 状态码）' : `HTTP: ${httpStatus}`;
 }
 
 function renderButtonStates() {
@@ -909,8 +1028,9 @@ function renderButtonStates() {
   const canUseImageApi = isImageApiAvailable();
   $('reverseBtn').disabled = !hasImage || !canUsePromptApi;
   $('generateBtn').disabled = !hasPrompt || !canUseImageApi;
-  $('generateMixedBtn').disabled = !hasPrompt || !canUseImageApi;
-  $('downloadAllBtn').disabled = !state.results.length;
+  $('generateMultiAngleBtn').disabled = !hasPrompt || !canUseImageApi;
+  const hasDownloadableResults = state.results.some((image) => !image.failed && (image.url || image.thumbUrl));
+  $('downloadAllBtn').disabled = !hasDownloadableResults;
   $('regenerateBtn').disabled = !hasPrompt || !state.results.length || !canUseImageApi;
   $('clearBtn').disabled = !hasImage;
   $('optimizeZhBtn').disabled = !hasPrompt || !canUsePromptApi;

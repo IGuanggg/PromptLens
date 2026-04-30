@@ -147,19 +147,29 @@ export function createHistoryItemFromState(state) {
       providerType: imageApi.type || '',
       model: imageApi.model || '',
       mode: state.generateSettings?.mode || 'standard',
+      generateMode: state.generateSettings?.generateMode || state.generateSettings?.mode || 'standard',
       width: Number(state.generateSettings?.width || 720),
       height: Number(state.generateSettings?.height || 720),
       count: Number(state.generateSettings?.count || 4),
       negativePrompt: ''
     },
+    generationMeta: state.generateSettings?.generationMeta || (
+      state.generateSettings?.mode === 'multi-angle'
+        ? { mode: 'multi-angle', angles: ['reference', 'side', 'back', 'top'] }
+        : { mode: state.generateSettings?.mode || 'standard', angles: [] }
+    ),
     results: (state.results || []).map((result) => ({
       id: result.id || createId('img'),
       url: result.url || '',
       thumbUrl: result.thumbUrl || result.url || '',
       label: result.label || '',
+      angleKey: result.angleKey || '',
       provider: result.provider || imageApi.type || '',
       width: Number(result.width || 0),
       height: Number(result.height || 0),
+      prompt: result.prompt || '',
+      failed: Boolean(result.failed),
+      errorMessage: result.errorMessage || '',
       createdAt: result.createdAt || now
     })),
     meta: {
