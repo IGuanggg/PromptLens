@@ -18,6 +18,7 @@ label { display: grid; gap: 7px; color: var(--muted); font-size: 13px; margin-bo
 input, select, textarea { width: 100%; border: 1px solid var(--border); background: rgba(0,0,0,.18); color: var(--text); border-radius: 12px; padding: 11px; outline: none; }
 textarea { min-height: 90px; resize: vertical; }
 .small-textarea { min-height: 64px; }
+.field-description { color: var(--faint); font-size: 12px; line-height: 1.45; }
 .switch-row { display: flex; align-items: center; gap: 8px; }
 .switch-row input { width: auto; }
 .footer-actions { display: flex; gap: 10px; align-items: center; margin-top: 18px; background: rgba(18,24,33,.85); border: 1px solid var(--border); border-radius: 18px; padding: 12px; position: sticky; bottom: 10px; backdrop-filter: blur(12px); }
@@ -70,4 +71,11 @@ textarea { min-height: 90px; resize: vertical; }
 .final-size.invalid {
   background: rgba(255,92,122,.06); border-color: rgba(255,92,122,.25);
   color: var(--danger);
+}
+.size-compatibility-hint {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
 }

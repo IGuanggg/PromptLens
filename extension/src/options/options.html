@@ -104,8 +104,8 @@
               <label>Response Format<select name="imageApi.responseFormat"><option value="url">url</option><option value="b64_json">b64_json</option></select></label>
               <label>Size Format
                 <select name="imageApi.sizeFormat">
-                  <option value="x">720x1280</option>
-                  <option value="*">720*1280 (DashScope)</option>
+                  <option value="x">widthxheight</option>
+                  <option value="*">width*height (DashScope)</option>
                   <option value="openai-mapped">OpenAI mapped</option>
                 </select>
               </label>
@@ -134,22 +134,25 @@
 
               <label>清晰度
                 <select id="resolutionPreset" data-path="imageApi.resolutionPreset">
-                  <option value="p720">标准 720p</option>
-                  <option value="p1080">高清 1080p</option>
+                  <option value="1k">1K / 标准</option>
+                  <option value="2k">2K / 高清</option>
+                  <option value="4k">4K / 超清</option>
                 </select>
+                <span id="resolutionDescription" class="field-description">1920 × 1080，适合快速生成和普通预览</span>
               </label>
 
               <div id="sizeCustomGroup" class="size-custom-group hidden">
                 <div class="form-grid">
-                  <label>宽度 px<input id="customWidth" type="number" min="16" step="2" value="720" data-path="imageApi.customWidth" /></label>
-                  <label>高度 px<input id="customHeight" type="number" min="16" step="2" value="720" data-path="imageApi.customHeight" /></label>
+                  <label>宽度 px<input id="customWidth" type="number" min="16" step="2" value="1080" data-path="imageApi.customWidth" /></label>
+                  <label>高度 px<input id="customHeight" type="number" min="16" step="2" value="1080" data-path="imageApi.customHeight" /></label>
                 </div>
                 <p class="hint-text">宽度和高度必须 ≥ 16，并会自动修正为偶数，长宽比不超过 3:1。</p>
               </div>
 
               <div class="final-size" id="finalSizeLabel">
-                最终尺寸：720 × 720
+                最终尺寸：1080 × 1080
               </div>
+              <p id="sizeCompatibilityHint" class="size-compatibility-hint hidden">当前接口可能会在发送请求时自动映射为兼容尺寸，实际发送尺寸可在调试日志查看。</p>
             </div>
 
             <!-- Custom Image fields -->

@@ -1,4 +1,5 @@
 import { AUTH_TYPES, REQUEST_MODES } from '../constants.js';
+import { getOutputSize, migrateResolutionPreset, migrateSizeMode } from '../utils/size.js';
 
 export const DEFAULT_SETTINGS = {
   promptApi: {
@@ -27,16 +28,16 @@ export const DEFAULT_SETTINGS = {
     endpoint: '/v1/images/generations',
     apiKey: '',
     model: 'gpt-image-1',
-    size: '720x720',
+    size: '1080x1080',
     sizeFormat: 'x',
     responseFormat: 'url',
     sizeMode: 'preset',
     aspectRatio: '1:1',
-    resolutionPreset: 'p720',
-    customWidth: 720,
-    customHeight: 720,
-    finalWidth: 720,
-    finalHeight: 720,
+    resolutionPreset: '1k',
+    customWidth: 1080,
+    customHeight: 1080,
+    finalWidth: 1080,
+    finalHeight: 1080,
     custom: {
       method: 'POST',
       authType: AUTH_TYPES.BEARER,
@@ -83,15 +84,57 @@ export function deepMerge(target, source) {
 
 export async function loadSettings() {
   const data = await chrome.storage.local.get('settings');
-  return deepMerge(DEFAULT_SETTINGS, data.settings || {});
+  return normalizeSettings(data.settings || {});
 }
 
 export async function saveSettings(settings) {
-  await chrome.storage.local.set({ settings });
-  return settings;
+  const normalized = normalizeSettings(settings);
+  await chrome.storage.local.set({ settings: normalized });
+  return normalized;
 }
 
 export async function resetSettings() {
   await chrome.storage.local.set({ settings: DEFAULT_SETTINGS });
   return DEFAULT_SETTINGS;
+}
+
+export function normalizeSettings(settings) {
+  const sourceImageApi = settings?.imageApi || {};
+  const normalized = deepMerge(DEFAULT_SETTINGS, settings || {});
+  const api = normalized.imageApi || {};
+  const sourceResolution = Object.prototype.hasOwnProperty.call(sourceImageApi, 'resolutionPreset')
+    ? sourceImageApi.resolutionPreset
+    : sourceImageApi.quality;
+  const sourceAspectRatio = Object.prototype.hasOwnProperty.call(sourceImageApi, 'aspectRatio')
+    ? sourceImageApi.aspectRatio
+    : sourceImageApi.selectedRatio;
+
+  api.sizeMode = migrateSizeMode(api.sizeMode || 'preset');
+  api.aspectRatio = sourceAspectRatio || api.aspectRatio || '1:1';
+  api.resolutionPreset = migrateResolutionPreset(sourceResolution || api.resolutionPreset);
+  api.customWidth = Number(api.customWidth || 1080);
+  api.customHeight = Number(api.customHeight || 1080);
+  delete api.selectedRatio;
+  delete api.quality;
+
+  try {
+    const outputSize = getOutputSize({
+      sizeMode: api.sizeMode,
+      aspectRatio: api.aspectRatio,
+      resolutionPreset: api.resolutionPreset,
+      customWidth: api.customWidth,
+      customHeight: api.customHeight,
+      referenceImage: null
+    });
+    api.finalWidth = outputSize.width;
+    api.finalHeight = outputSize.height;
+    api.size = outputSize.size;
+  } catch {
+    api.finalWidth = 1080;
+    api.finalHeight = 1080;
+    api.size = '1080x1080';
+  }
+
+  normalized.imageApi = api;
+  return normalized;
 }

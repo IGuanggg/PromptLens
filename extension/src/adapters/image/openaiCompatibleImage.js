@@ -28,7 +28,7 @@ export async function callOpenAICompatibleImage({ prompt, settings, count, width
         requestedSize,
         providerSize,
         provider: 'openai-compatible-image',
-        reason: 'OpenAI-compatible provider only supports fixed image sizes'
+        reason: 'Provider only supports fixed image sizes'
       }
     });
   }
@@ -40,18 +40,20 @@ export async function callOpenAICompatibleImage({ prompt, settings, count, width
     message: `Image payload size: ${providerSize}`,
     data: { requestedSize, providerSize, width, height, sizeFormat, provider: 'openai-compatible-image' }
   });
+  const body = {
+    model: settings.model,
+    prompt,
+    n: Number(count || 1),
+    size: providerSize,
+    response_format: settings.responseFormat || 'url'
+  };
+  if (settings.quality) body.quality = settings.quality;
+
   const raw = await fetchJsonWithTimeout(url, {
     method: 'POST',
     headers: buildHeaders({ authType: 'bearer', apiKey: settings.apiKey }),
-    body: JSON.stringify({
-      model: settings.model,
-      prompt,
-      n: Number(count || 1),
-      size: providerSize,
-      quality: settings.quality || 'standard',
-      response_format: settings.responseFormat || 'url'
-    })
-  }, settings.timeout || 60000, { provider: 'openai-compatible-image', debug: { ...debug, apiKey: settings.apiKey } });
+    body: JSON.stringify(body)
+  }, settings.timeout || 60000, { apiType: 'image', provider: 'openai-compatible-image', debug: { ...debug, apiKey: settings.apiKey } });
 
   return normalizeOpenAIImageResult(raw, 'openai-compatible-image', {
     width,

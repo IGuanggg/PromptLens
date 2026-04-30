@@ -13,8 +13,8 @@ export async function generateImages({
   referenceImage = '',
   mode = 'standard',
   count = 4,
-  width = 720,
-  height = 720,
+  width = 1080,
+  height = 1080,
   size = `${width}x${height}`,
   dashscopeSize = `${width}*${height}`,
   outputSize = null,
@@ -324,7 +324,7 @@ async function callOpenAICompatibleImage({ api, prompt, count, width, height, si
         requestedSize,
         providerSize,
         provider: 'openai-compatible-image',
-        reason: 'OpenAI-compatible provider only supports fixed image sizes'
+        reason: 'Provider only supports fixed image sizes'
       }
     });
   }
@@ -490,11 +490,11 @@ function createMultiAngleFailureHint({ api, outputSize }) {
   if (api.type !== IMAGE_API_TYPES.CUSTOM && sizeFormat !== 'openai-mapped') {
     const mapped = mapSizeForOpenAIImages(outputSize.size);
     if (mapped !== outputSize.size) {
-      return `当前请求尺寸为 ${outputSize.size}，OpenAI 兼容接口通常不支持该尺寸；请在设置中把 Image API 的 Size Format 改为 OpenAI mapped，或改用 720p/1:1 后重试。`;
+      return `当前请求尺寸为 ${outputSize.size}，OpenAI 兼容接口通常不支持该尺寸；请在设置中把 Image API 的 Size Format 改为 OpenAI mapped，或改用 1K/1:1 后重试。`;
     }
   }
-  if (sizeFormat === 'openai-mapped' && outputSize.resolutionPreset === 'p1080') {
-    return '当前为 1080p 多角度连续生成，请尝试切换到 720p 或确认模型支持竖版图像生成。';
+  if (sizeFormat === 'openai-mapped' && ['2k', '4k'].includes(outputSize.resolutionPreset)) {
+    return '当前为高清多角度连续生成，请尝试切换到 1K 或确认模型支持当前比例的图像生成。';
   }
   return '';
 }

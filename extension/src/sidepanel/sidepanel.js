@@ -445,8 +445,8 @@ async function handleGenerate() {
     sizeMode,
     aspectRatio,
     resolutionPreset,
-    customWidth: api.customWidth || 720,
-    customHeight: api.customHeight || 720,
+    customWidth: api.customWidth || 1080,
+    customHeight: api.customHeight || 1080,
     referenceImage: refWidth && refHeight ? { width: refWidth, height: refHeight } : null
   });
   const width = outputSize.width;
@@ -521,8 +521,8 @@ async function handleGenerateMultiAngleImages() {
     sizeMode,
     aspectRatio,
     resolutionPreset,
-    customWidth: api.customWidth || 720,
-    customHeight: api.customHeight || 720,
+    customWidth: api.customWidth || 1080,
+    customHeight: api.customHeight || 1080,
     referenceImage: refWidth && refHeight ? { width: refWidth, height: refHeight } : null
   });
 
@@ -553,6 +553,7 @@ async function handleGenerateMultiAngleImages() {
       requestedSize: outputSize.size,
       width: outputSize.width,
       height: outputSize.height,
+      sizeMode: outputSize.sizeMode,
       aspectRatio: outputSize.aspectRatio,
       resolutionPreset: outputSize.resolutionPreset
     }

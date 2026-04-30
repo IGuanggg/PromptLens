@@ -2,34 +2,66 @@ export const ASPECT_RATIOS = ['1:1', '4:3', '3:4', '16:9', '9:16'];
 
 export const RATIO_OPTIONS = ASPECT_RATIOS;
 
-export const presetSizes = {
-  p720: {
-    '1:1': [720, 720],
-    '16:9': [1280, 720],
-    '9:16': [720, 1280],
-    '4:3': [960, 720],
-    '3:4': [720, 960]
+export const RESOLUTION_PRESETS = {
+  '1k': {
+    label: '1K / 标准',
+    description: '1920 × 1080，适合快速生成和普通预览'
   },
-  p1080: {
+  '2k': {
+    label: '2K / 高清',
+    description: '2560 × 1440，适合更清晰的作品输出'
+  },
+  '4k': {
+    label: '4K / 超清',
+    description: '3840 × 2160，适合高质量大图输出'
+  }
+};
+
+export const presetSizes = {
+  '1k': {
     '1:1': [1080, 1080],
     '16:9': [1920, 1080],
     '9:16': [1080, 1920],
     '4:3': [1440, 1080],
     '3:4': [1080, 1440]
+  },
+  '2k': {
+    '1:1': [1440, 1440],
+    '16:9': [2560, 1440],
+    '9:16': [1440, 2560],
+    '4:3': [1920, 1440],
+    '3:4': [1440, 1920]
+  },
+  '4k': {
+    '1:1': [2160, 2160],
+    '16:9': [3840, 2160],
+    '9:16': [2160, 3840],
+    '4:3': [2880, 2160],
+    '3:4': [2160, 2880]
   }
 };
 
 export const PRESET_SIZES = presetSizes;
 
-export const RESOLUTION_PRESET_LABELS = {
-  p720: '标准 720p',
-  p1080: '高清 1080p'
-};
+export const RESOLUTION_PRESET_LABELS = Object.fromEntries(
+  Object.entries(RESOLUTION_PRESETS).map(([key, value]) => [key, value.label])
+);
 
 export function migrateResolutionPreset(value) {
-  if (value === 'p720' || value === 'standard') return 'p720';
-  if (value === 'p1080' || value === 'hd' || value === 'ultra') return 'p1080';
-  return 'p720';
+  if (!value) return '1k';
+
+  const map = {
+    p720: '1k',
+    p1080: '1k',
+    standard: '1k',
+    hd: '2k',
+    ultra: '4k',
+    '1k': '1k',
+    '2k': '2k',
+    '4k': '4k'
+  };
+
+  return map[value] || '1k';
 }
 
 export function migrateSizeMode(value) {
@@ -99,7 +131,8 @@ export function getOutputSize({
 
   if (mode === 'follow-reference') {
     const detectedRatio = detectRatio(referenceImage?.width, referenceImage?.height);
-    const pair = presetSizes[safeResolution]?.[detectedRatio] || presetSizes.p720['1:1'];
+    const pair = presetSizes[safeResolution]?.[detectedRatio] || presetSizes['1k']['1:1'];
+
     return {
       ...normalizeSize(pair[0], pair[1]),
       aspectRatio: detectedRatio,
@@ -110,7 +143,8 @@ export function getOutputSize({
 
   if (mode === 'preset') {
     const safeRatio = ASPECT_RATIOS.includes(aspectRatio) ? aspectRatio : '1:1';
-    const pair = presetSizes[safeResolution]?.[safeRatio] || presetSizes.p720['1:1'];
+    const pair = presetSizes[safeResolution]?.[safeRatio] || presetSizes['1k']['1:1'];
+
     return {
       ...normalizeSize(pair[0], pair[1]),
       aspectRatio: safeRatio,
@@ -121,7 +155,7 @@ export function getOutputSize({
 
   if (mode === 'custom') {
     return {
-      ...normalizeSize(customWidth || 720, customHeight || 720),
+      ...normalizeSize(customWidth || 1080, customHeight || 1080),
       aspectRatio: 'custom',
       resolutionPreset: safeResolution,
       sizeMode: 'custom'
@@ -129,9 +163,9 @@ export function getOutputSize({
   }
 
   return {
-    ...normalizeSize(720, 720),
+    ...normalizeSize(1080, 1080),
     aspectRatio: '1:1',
-    resolutionPreset: 'p720',
+    resolutionPreset: '1k',
     sizeMode: 'preset'
   };
 }
@@ -140,16 +174,25 @@ export function mapSizeForOpenAIImages(size) {
   const supported = ['1024x1024', '1536x1024', '1024x1536', 'auto'];
 
   const fallbackMap = {
-    '720x720': '1024x1024',
     '1080x1080': '1024x1024',
-    '1280x720': '1536x1024',
+    '1440x1440': '1024x1024',
+    '2160x2160': '1024x1024',
+
     '1920x1080': '1536x1024',
-    '960x720': '1536x1024',
-    '1440x1080': '1536x1024',
-    '720x1280': '1024x1536',
+    '2560x1440': '1536x1024',
+    '3840x2160': '1536x1024',
+
     '1080x1920': '1024x1536',
-    '720x960': '1024x1536',
-    '1080x1440': '1024x1536'
+    '1440x2560': '1024x1536',
+    '2160x3840': '1024x1536',
+
+    '1440x1080': '1536x1024',
+    '1920x1440': '1536x1024',
+    '2880x2160': '1536x1024',
+
+    '1080x1440': '1024x1536',
+    '1440x1920': '1024x1536',
+    '2160x2880': '1024x1536'
   };
 
   if (supported.includes(size)) return size;

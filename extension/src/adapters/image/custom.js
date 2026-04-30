@@ -3,8 +3,9 @@ import { REQUEST_MODES } from '../../constants.js';
 import { buildHeaders, buildUrl, fetchJsonWithTimeout, getByPath, parseTemplateBody, replaceTemplate } from '../../utils/customApi.js';
 import { ERROR_CODES, createAppError } from '../../utils/errors.js';
 import { normalizeImageResult } from '../../utils/imageResult.js';
+import { appendLog } from '../../services/logService.js';
 
-export async function callCustomImageApi({ prompt, negativePrompt, referenceImage, settings, defaults = {}, mode, count, width = 720, height = 720, size, dashscopeSize, outputSize, debug }) {
+export async function callCustomImageApi({ prompt, negativePrompt, referenceImage, settings, defaults = {}, mode, count, width = 1080, height = 1080, size, dashscopeSize, outputSize, debug }) {
   if (!settings?.baseUrl || !settings?.generateApiPath) return mockImages('custom-image-mock', count || 4, outputSize?.width || width, outputSize?.height || height);
 
   const variables = {
@@ -26,6 +27,21 @@ export async function callCustomImageApi({ prompt, negativePrompt, referenceImag
     cfgScale: settings.cfgScale || defaults.cfgScale || '',
     seed: settings.seed || defaults.seed || defaults.seedMode || 'random'
   };
+  appendLog({
+    level: 'info',
+    apiType: 'image',
+    event: 'IMAGE_PAYLOAD_SIZE',
+    provider: 'custom-image',
+    message: `Custom image payload size: ${variables.size}`,
+    data: {
+      requestedSize: variables.size,
+      providerSize: variables.size,
+      width: variables.width,
+      height: variables.height,
+      sizeFormat: settings.sizeFormat || 'x',
+      provider: 'custom-image'
+    }
+  });
 
   const generateUrl = buildUrl(settings.baseUrl, settings.generateApiPath, variables);
   const method = settings.method || 'POST';
@@ -33,7 +49,7 @@ export async function callCustomImageApi({ prompt, negativePrompt, referenceImag
     method,
     headers: buildHeaders(settings),
     body: method.toUpperCase() === 'GET' ? undefined : parseTemplateBody(settings.requestTemplate, variables)
-  }, settings.timeout || 60000, { provider: 'custom', debug: { ...debug, apiKey: settings.apiKey || settings.customHeaderValue } });
+  }, settings.timeout || 60000, { apiType: 'image', provider: 'custom', debug: { ...debug, apiKey: settings.apiKey || settings.customHeaderValue } });
 
   const finalRaw = settings.requestMode === REQUEST_MODES.ASYNC
     ? await pollCustomImageResult(generated, settings, variables, debug)
@@ -62,7 +78,7 @@ async function pollCustomImageResult(initialRaw, settings, variables, debug) {
     const raw = await fetchJsonWithTimeout(statusUrl, {
       method: 'GET',
       headers: buildHeaders(settings)
-    }, settings.timeout || 60000, { provider: 'custom', debug: { ...debug, apiKey: settings.apiKey || settings.customHeaderValue } });
+    }, settings.timeout || 60000, { apiType: 'image', provider: 'custom', debug: { ...debug, apiKey: settings.apiKey || settings.customHeaderValue } });
     const status = String(getByPath(raw, map.status || 'status') || '').toLowerCase();
     if (['succeeded', 'success', 'completed', 'done', 'finished'].includes(status)) return raw;
     if (['failed', 'error', 'canceled', 'cancelled'].includes(status)) {

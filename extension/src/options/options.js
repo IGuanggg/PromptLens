@@ -4,7 +4,7 @@ import { clearHistory, createHistoryExportFilename, exportHistory, importHistory
 import { getLogs, clearLogs, getLastCall, initLogService, setLogSettings, setLogLimit } from '../services/logService.js';
 import { appendLog, updateLastCall } from '../services/logService.js';
 import { testPromptTextApi, testPromptVisionApi } from '../services/promptService.js';
-import { RATIO_OPTIONS, getOutputSize, mapSizeForOpenAIImages, migrateResolutionPreset, migrateSizeMode } from '../utils/size.js';
+import { RESOLUTION_PRESETS, getOutputSize, mapSizeForOpenAIImages, migrateResolutionPreset, migrateSizeMode } from '../utils/size.js';
 
 const form = document.getElementById('settingsForm');
 const saveStatus = document.getElementById('saveStatus');
@@ -13,9 +13,9 @@ let settings = DEFAULT_SETTINGS;
 // ── Size control reactive state ──
 let sizeMode = 'preset';
 let aspectRatio = '1:1';
-let resolutionPreset = 'p720';
-let customWidth = 720;
-let customHeight = 720;
+let resolutionPreset = '1k';
+let customWidth = 1080;
+let customHeight = 1080;
 let refImage = null;
 
 function getByPath(obj, path) {
@@ -83,8 +83,8 @@ function loadSizeState(s) {
   sizeMode = migrateSizeMode(api.sizeMode || 'preset');
   aspectRatio = api.aspectRatio || api.selectedRatio || '1:1';
   resolutionPreset = migrateResolutionPreset(api.resolutionPreset || api.quality);
-  customWidth = api.customWidth || 720;
-  customHeight = api.customHeight || 720;
+  customWidth = api.customWidth || 1080;
+  customHeight = api.customHeight || 1080;
 
   document.getElementById('sizeMode').value = sizeMode;
   document.getElementById('resolutionPreset').value = resolutionPreset;
@@ -97,6 +97,7 @@ function loadSizeState(s) {
 
   updateSizePanelVisibility();
   updateFinalSize();
+  updateResolutionDescription();
 }
 
 function bindSizeControl() {
@@ -118,8 +119,13 @@ function bindSizeControl() {
 
   document.getElementById('resolutionPreset').addEventListener('change', (e) => {
     resolutionPreset = migrateResolutionPreset(e.target.value);
+    e.target.value = resolutionPreset;
+    updateResolutionDescription();
     updateFinalSize();
   });
+
+  document.querySelector('[name="imageApi.sizeFormat"]')?.addEventListener('change', updateFinalSize);
+  document.getElementById('imageApiType')?.addEventListener('change', updateFinalSize);
 
   document.getElementById('customWidth').addEventListener('input', () => {
     customWidth = parseInt(document.getElementById('customWidth').value, 10) || 0;
@@ -141,6 +147,7 @@ function updateSizePanelVisibility() {
 
 function updateFinalSize() {
   const label = document.getElementById('finalSizeLabel');
+  const hint = document.getElementById('sizeCompatibilityHint');
   try {
     const size = getOutputSize({
       sizeMode,
@@ -152,18 +159,26 @@ function updateFinalSize() {
     });
     label.textContent = `最终尺寸：${size.width} × ${size.height}`;
     label.className = 'final-size';
+    hint?.classList.toggle('hidden', !shouldShowCompatibilityHint(size, getCurrentImageApiDraft()));
   } catch (error) {
     label.textContent = `最终尺寸：无效 - ${error.message || '尺寸错误'}`;
     label.className = 'final-size invalid';
+    hint?.classList.add('hidden');
   }
+}
+
+function updateResolutionDescription() {
+  const description = document.getElementById('resolutionDescription');
+  if (!description) return;
+  description.textContent = RESOLUTION_PRESETS[resolutionPreset]?.description || RESOLUTION_PRESETS['1k'].description;
 }
 
 function readSizeStateInto(api) {
   api.sizeMode = migrateSizeMode(sizeMode);
   api.aspectRatio = aspectRatio;
   api.resolutionPreset = migrateResolutionPreset(resolutionPreset);
-  api.customWidth = customWidth || 720;
-  api.customHeight = customHeight || 720;
+  api.customWidth = customWidth || 1080;
+  api.customHeight = customHeight || 1080;
   delete api.selectedRatio;
   delete api.quality;
 
@@ -180,10 +195,24 @@ function readSizeStateInto(api) {
     api.finalHeight = sz.height;
     api.size = sz.size;
   } catch {
-    api.finalWidth = 720;
-    api.finalHeight = 720;
-    api.size = '720x720';
+    api.finalWidth = 1080;
+    api.finalHeight = 1080;
+    api.size = '1080x1080';
   }
+}
+
+function getCurrentImageApiDraft() {
+  return {
+    type: document.getElementById('imageApiType')?.value || settings?.imageApi?.type || '',
+    sizeFormat: document.querySelector('[name="imageApi.sizeFormat"]')?.value || settings?.imageApi?.sizeFormat || 'x'
+  };
+}
+
+function shouldShowCompatibilityHint(outputSize, api = {}) {
+  if ((api.sizeFormat || 'x') === 'openai-mapped' && mapSizeForOpenAIImages(outputSize.size) !== outputSize.size) {
+    return true;
+  }
+  return false;
 }
 
 function getProviderSizeForFormat(outputSize, api = {}) {
@@ -196,7 +225,7 @@ function getProviderSizeForFormat(outputSize, api = {}) {
 function bindActions() {
   document.getElementById('saveBtn').addEventListener('click', async () => {
     settings = readForm();
-    await saveSettings(settings);
+    settings = await saveSettings(settings);
     setLogSettings(settings);
     setLogLimit(settings?.advanced?.debugLogLimit || 200);
 
@@ -398,7 +427,12 @@ function bindActions() {
       apiType: 'image',
       event: 'TEST_IMAGE_API',
       provider: api.type,
-      message: `手动测试 Image API 配置${realTest ? ' (真实出图)' : ''}`
+      message: `手动测试 Image API 配置${realTest ? ' (真实出图)' : ''}`,
+      data: {
+        sizeMode: api.sizeMode,
+        aspectRatio: api.aspectRatio,
+        resolutionPreset: api.resolutionPreset
+      }
     });
 
     try {
@@ -422,7 +456,7 @@ function bindActions() {
           data: {
             requestedSize: outputSize.size,
             providerSize,
-            reason: 'OpenAI-compatible provider only supports fixed image sizes'
+            reason: 'Provider only supports fixed image sizes'
           }
         });
       }
@@ -437,6 +471,9 @@ function bindActions() {
           providerSize,
           width: outputSize.width,
           height: outputSize.height,
+          aspectRatio: outputSize.aspectRatio,
+          resolutionPreset: outputSize.resolutionPreset,
+          sizeMode: outputSize.sizeMode,
           sizeFormat: api.sizeFormat || 'x',
           provider: api.type
         }

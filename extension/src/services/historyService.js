@@ -148,8 +148,8 @@ export function createHistoryItemFromState(state) {
       model: imageApi.model || '',
       mode: state.generateSettings?.mode || 'standard',
       generateMode: state.generateSettings?.generateMode || state.generateSettings?.mode || 'standard',
-      width: Number(state.generateSettings?.width || 720),
-      height: Number(state.generateSettings?.height || 720),
+      width: Number(state.generateSettings?.width || 1080),
+      height: Number(state.generateSettings?.height || 1080),
       count: Number(state.generateSettings?.count || 4),
       negativePrompt: ''
     },

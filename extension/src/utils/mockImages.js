@@ -1,4 +1,4 @@
-export function mockImages(provider, count = 4, width = 720, height = 720) {
+export function mockImages(provider, count = 4, width = 1080, height = 1080) {
   const labels = ['参考风格', '创意变体', '结构草图', '线稿风格'];
   const stamp = Date.now();
   return {
