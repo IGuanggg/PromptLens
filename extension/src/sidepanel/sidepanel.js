@@ -1085,9 +1085,17 @@ function renderError() {
 
   let msg = error.message || '操作失败';
   if (isModeration) {
-    msg = '图像服务认为生成结果可能违反内容安全策略。\n\n建议：删除具体人物/明星/IP/品牌/艺术家姓名；降低"写实肖像""完全复刻""同款"等表达；改成描述主体、构图、光线、色彩和氛围。\n\n服务商可能已返还积分，请以后台记录为准。';
+    const sanitizerOn = state.settings?.promptApi?.enablePromptSanitizer !== false;
+    const sanitizerHint = sanitizerOn
+      ? '已启用 Prompt 净化，但仍触发审核。请进一步删除具体人物、IP、品牌、艺术家姓名或"完全复刻""同款"等表达。'
+      : '你已关闭"生成前自动净化 Prompt"。可以在 Prompt API 设置中开启，以降低审核失败概率。';
+    msg = `图像服务认为生成结果可能违反内容安全策略。\n\n建议：删除具体人物/明星/IP/品牌/艺术家姓名；降低"写实肖像""完全复刻""同款"等表达；改成描述主体、构图、光线、色彩和氛围。\n\n${sanitizerHint}\n\n服务商可能已返还积分，请以后台记录为准。`;
   } else if (isInputModeration) {
-    msg = '提示词或参考图可能触发了输入安全策略，请修改 Prompt 或更换参考图。';
+    const sanitizerOn = state.settings?.promptApi?.enablePromptSanitizer !== false;
+    const sanitizerHint = sanitizerOn
+      ? '已启用 Prompt 净化，但仍触发输入审核。请进一步修改 Prompt 或更换参考图。'
+      : '你已关闭"生成前自动净化 Prompt"。可以在 Prompt API 设置中开启。';
+    msg = `提示词或参考图可能触发了输入安全策略，请修改 Prompt 或更换参考图。\n\n${sanitizerHint}`;
   } else if (shouldUseNoResponseMessage) {
     msg = '请求没有获得有效 HTTP 响应，可能是超时、网络中断、CORS、请求被浏览器取消，或接口耗时过长。';
   } else if (rawStatus || rawReason) {

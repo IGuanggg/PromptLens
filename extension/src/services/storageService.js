@@ -9,6 +9,7 @@ export const DEFAULT_SETTINGS = {
     model: 'gpt-4.1-mini',
     temperature: 0.2,
     maxTokens: 1200,
+    enablePromptSanitizer: true,
     customInstruction: '',
     custom: {
       method: 'POST',

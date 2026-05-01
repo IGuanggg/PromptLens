@@ -183,9 +183,22 @@ export function validateNanoBananaPayload(body) {
 export function sanitizePromptForImageGeneration(prompt) {
   if (!prompt) return '';
   let text = String(prompt);
+
+  // English: artist/style attribution phrases
   text = text.replace(/\bin the style of\s+[\w\s-]+/gi, '');
-  text = text.replace(/\b(exact copy|replica|identical to|same as|仿|一模一样|完全复刻|同款)\s+[\w\s-]*/gi, '');
+  text = text.replace(/\bby\s+[\w\s-]+\s*(\(?\d{4}[\-–]\d{4}\)?)?/gi, '');
+
+  // English: copy/replica/brand risk terms
+  text = text.replace(/\b(exact copy|replica|identical to|same as|copyrighted|trademarked|celebrity|brand logo|famous character)\s*[\w\s-]*/gi, '');
+
+  // Chinese: copy/replica risk phrases
+  text = text.replace(/(仿|模仿|一模一样|完全复刻|精准复刻|同款|原版|盗版|明星同脸)\s*[\w\s一-鿿-]*/g, '');
+
+  // Trademark symbols
   text = text.replace(/[©®™]/g, '');
+
+  // Collapse whitespace
   text = text.replace(/\s{2,}/g, ' ').trim();
+
   return text || prompt;
 }

@@ -6,7 +6,7 @@ import { mockImages } from '../utils/mockImages.js';
 import { getOutputSize, mapSizeForOpenAIImages, getProviderSize } from '../utils/size.js';
 import { createMultiAnglePrompts } from './anglePromptService.js';
 import { appendLog } from './logService.js';
-import { getImageModelConfig, toApiImageSize, detectAspectRatioFromImage, resolveAspectRatioForNano, validateNanoBananaPayload, getSafeResolutionForModel, modelSupportsResolution } from '../data/imageModels.js';
+import { getImageModelConfig, toApiImageSize, detectAspectRatioFromImage, resolveAspectRatioForNano, validateNanoBananaPayload, getSafeResolutionForModel, modelSupportsResolution, sanitizePromptForImageGeneration } from '../data/imageModels.js';
 import { extractTaskId, pollImageResult, normalizeImageTaskFailure } from './imageTaskService.js';
 
 export async function generateImages({
@@ -193,8 +193,17 @@ export async function generateMultiAngleImages({
     });
 
     try {
+      // Sanitize angle prompt if enabled
+      const shouldSanitize = settings?.promptApi?.enablePromptSanitizer !== false;
+      const rawAnglePrompt = anglePrompt;
+      const sanitizedAnglePrompt = shouldSanitize ? sanitizePromptForImageGeneration(rawAnglePrompt) : rawAnglePrompt;
+      const finalAnglePrompt = sanitizedAnglePrompt || rawAnglePrompt;
+      if (shouldSanitize && finalAnglePrompt !== rawAnglePrompt) {
+        appendLog({ level: 'info', apiType: 'image', event: 'PROMPT_SANITIZER_APPLIED', provider, message: `Angle ${angle.label} prompt sanitized`, data: { enabled: true, changed: true, originalLength: rawAnglePrompt.length, sanitizedLength: finalAnglePrompt.length, mode: 'multi-angle', angleKey: angle.key } });
+      }
+
       const result = await generateImages({
-        prompt: anglePrompt,
+        prompt: finalAnglePrompt,
         negativePrompt,
         referenceImage,
         mode: 'multi-angle',
@@ -363,6 +372,32 @@ async function callDrawApi({ api, prompt, referenceImage, width, height, dashsco
   const submitUrl = `${baseUrl}${modelConfig.submitEndpoint}`;
   const resultEp = api.resultEndpoint || modelConfig.resultEndpoint || '/v1/draw/result';
   const channel = modelConfig.channel;
+
+  // ── Prompt sanitizer ──
+  const rawPrompt = prompt;
+  const shouldSanitize = settings?.promptApi?.enablePromptSanitizer !== false; // default true
+  let sanitizedPrompt = rawPrompt;
+  if (shouldSanitize && rawPrompt) {
+    sanitizedPrompt = sanitizePromptForImageGeneration(rawPrompt);
+    const changed = sanitizedPrompt !== rawPrompt;
+    appendLog({
+      level: 'info', apiType: 'image',
+      event: changed ? 'PROMPT_SANITIZER_APPLIED' : 'PROMPT_SANITIZER_SKIPPED',
+      provider: 'draw-api',
+      message: changed ? 'Prompt sanitized before generation' : 'Prompt sanitizer skipped (no changes)',
+      data: { enabled: true, enabledFrom: 'promptApi.enablePromptSanitizer', changed, originalLength: rawPrompt.length, sanitizedLength: sanitizedPrompt.length, mode: 'single' }
+    });
+  } else {
+    appendLog({
+      level: 'info', apiType: 'image',
+      event: 'PROMPT_SANITIZER_SKIPPED',
+      provider: 'draw-api',
+      message: 'Prompt sanitizer disabled',
+      data: { enabled: false, enabledFrom: 'promptApi.enablePromptSanitizer', originalLength: rawPrompt?.length || 0 }
+    });
+  }
+  const finalPrompt = sanitizedPrompt || rawPrompt;
+
   const resolutionPreset = outputSize?.resolutionPreset || api.resolutionPreset || '1k';
 
   // Resolve reference image URLs
@@ -387,7 +422,7 @@ async function callDrawApi({ api, prompt, referenceImage, width, height, dashsco
     const finalImageSize = toApiImageSize(safeRes);
 
     payload = {
-      model: api.model, prompt,
+      model: api.model, prompt: finalPrompt,
       aspectRatio: finalAspectRatio,
       imageSize: finalImageSize,
       urls, webHook: '-1', shutProgress: false
@@ -404,7 +439,7 @@ async function callDrawApi({ api, prompt, referenceImage, width, height, dashsco
       (outputSize?.aspectRatio || api.aspectRatio || '1:1');
 
     payload = {
-      model: api.model, prompt,
+      model: api.model, prompt: finalPrompt,
       aspectRatio,
       quality: 'auto',
       urls, webHook: '-1', shutProgress: false

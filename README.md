@@ -174,7 +174,7 @@ image-prompt-extension/
 **内容审核处理：**
 - `output_moderation` → `IMAGE_MODERATION_FAILED`（图片生成被安全审核拦截）
 - `input_moderation` → `IMAGE_INPUT_MODERATION_FAILED`（提示词触发输入审核）
-- 新增安全净化提示词功能
+- **生成前 Prompt 净化开关**：可在 Prompt API 设置中开启或关闭（默认开启）。开启后，插件在提交生图接口前自动弱化或移除高风险表达（如"完全复刻""同款""in the style of""exact copy"等），以降低 `input_moderation` / `output_moderation` 概率。原始 Prompt 文本框内容不会被修改，仅影响实际请求
 
 **Bug 修复：**
 - 修复 AbortError 被误判为 `code: 20` 的问题

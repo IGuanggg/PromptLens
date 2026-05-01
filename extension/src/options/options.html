@@ -56,6 +56,13 @@
               <label>Max Tokens<input name="promptApi.maxTokens" type="number" /></label>
             </div>
 
+            <h3>生成安全</h3>
+            <label class="switch-row">
+              <input name="promptApi.enablePromptSanitizer" type="checkbox" checked />
+              生成前自动净化 Prompt
+            </label>
+            <p class="field-description">开启后，会在提交生图接口前自动移除或弱化高风险表达，例如"完全复刻""同款""in the style of""exact copy"等，降低审核失败概率。原始 Prompt 文本框内容不会被修改。</p>
+
             <!-- Custom Prompt fields -->
             <div id="customPromptFields" class="custom-fields hidden">
               <h3>自定义请求配置</h3>
