@@ -168,6 +168,25 @@ PromptLens/
 - 保留 `promptpilotDraft`、`promptpilotHistory`、`promptpilotLogs` 等本地 storage key，避免旧用户配置、草稿和历史记录丢失。
 - 保留旧版 PromptPilot 历史导出文件导入兼容，方便从旧版本平滑迁移。
 
+### v0.3.1 — 通知提醒 & 图片持久化 & 粘贴修复 (2026-05)
+
+**右键发送通知：**
+- 右键"图片转提示词"成功后显示系统通知："已发送到 PromptLens"
+- 发送失败时显示系统通知："发送失败"
+- Side Panel 内 Toast 提示"图片已从右键菜单接收"（覆盖 Side Panel 已打开 / 冷启动两种场景）
+- 通知节流防止短时间连续右键导致刷屏
+
+**IndexedDB 图片持久化：**
+- 新增 `storage/imageBlobStore.js` — 基于 IndexedDB 的图片 Blob 存储（`saveImageBlob` / `getImageBlob` / `deleteImageBlob` / `cleanupBlobs`）
+- 新增 `utils/imageThumbnail.js` — Canvas 缩略图生成器（WebP 格式）
+- 上传/粘贴/右键图片自动后台保存至 IndexedDB，不阻塞主流程
+- 生成结果图立即抓取并保存 Blob，解决远程 URL 2 小时过期问题
+- 历史记录缩略图 5 级加载链：缩略图 blob → 源图 blob → 结果 blob → 远程 URL 回退 → "图片缓存丢失"占位符
+
+**粘贴修复：**
+- 粘贴按钮和 Ctrl+V 均增加诊断日志（`[PromptPilot][CLICK] pasteBtn`、`[PromptPilot][PASTE_EVENT]`）
+- 异步剪贴板 API 失败时自动提示使用 Ctrl+V
+
 ### v0.2.0 — 双通道生图 & 模型能力系统 (2026-05)
 
 **新增双通道图像生成架构：**
