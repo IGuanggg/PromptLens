@@ -74,7 +74,7 @@ export async function clearHistory() {
 
 export async function exportHistory() {
   return {
-    app: 'PromptPilot',
+    app: 'PromptLens',
     version: '1.0.0',
     exportedAt: Date.now(),
     items: await getHistory()
@@ -184,7 +184,7 @@ export function createHistoryItemFromState(state) {
 }
 
 export function createHistoryExportFilename() {
-  return `promptpilot_history_${formatCompactDateTime()}.json`;
+  return `promptlens_history_${formatCompactDateTime()}.json`;
 }
 
 function getHistoryLimit(settings) {

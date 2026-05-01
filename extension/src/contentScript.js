@@ -1,5 +1,5 @@
 /**
- * Content script for PromptPilot.
+ * Content script for PromptLens.
  *
  * Responsibilities:
  *  - Listen for FETCH_BLOB messages from background.js

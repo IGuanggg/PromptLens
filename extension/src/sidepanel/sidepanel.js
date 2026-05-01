@@ -311,7 +311,7 @@ function scheduleSaveCurrentImageMeta(image) {
 }
 
 function saveCurrentImageMeta(w, h) {
-  console.log('[PromptPilot] saveCurrentImageMeta', { width: w, height: h });
+  console.log('[PromptLens] saveCurrentImageMeta', { width: w, height: h });
   chrome.storage.local.set({
     currentImageMeta: { width: w, height: h, originalWidth: w, originalHeight: h, updatedAt: Date.now() }
   }).catch(() => {});
@@ -468,7 +468,7 @@ async function handleGenerate() {
   if (!isImageApiAvailable()) { toast('Image API 未连接，请先在设置中完成配置'); return; }
 
   // Duplicate-click guard: prevent multiple parallel generation requests
-  if (_isGenerating) { console.warn('[PromptPilot] generation already running, ignoring duplicate click'); toast('正在生成中，请等待完成'); return; }
+  if (_isGenerating) { console.warn('[PromptLens] generation already running, ignoring duplicate click'); toast('正在生成中，请等待完成'); return; }
   _isGenerating = true;
   $('generateBtn').textContent = '生成中...';
   $('generateMultiAngleBtn').textContent = '生成中...';
@@ -563,7 +563,7 @@ async function handleGenerateMultiAngleImages() {
   if (!isImageApiAvailable()) { toast('Image API 未连接，请先在设置中完成配置'); return; }
 
   // Duplicate-click guard
-  if (_isGenerating) { console.warn('[PromptPilot] generation already running'); toast('正在生成中，请等待完成'); return; }
+  if (_isGenerating) { console.warn('[PromptLens] generation already running'); toast('正在生成中，请等待完成'); return; }
   _isGenerating = true;
   $('generateBtn').textContent = '生成中...';
   $('generateMultiAngleBtn').textContent = '生成中...';
@@ -786,7 +786,7 @@ async function handleExportDebugLogs() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `promptpilot-debug-${Date.now()}.json`;
+  a.download = `promptlens-debug-${Date.now()}.json`;
   a.click();
   URL.revokeObjectURL(url);
   toast(`已导出 ${logs.length} 条日志`);

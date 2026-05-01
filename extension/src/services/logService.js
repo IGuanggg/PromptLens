@@ -63,7 +63,7 @@ export function appendLog(entry) {
   if (adv.enableDebugMode) {
     const method = { debug: console.debug, info: console.info, warn: console.warn, error: console.error };
     const fn = method[entry_.level] || console.log;
-    fn(`[PromptPilot][${entry_.level.toUpperCase()}][${entry_.event || '-'}] ${entry_.message || ''}`,
+    fn(`[PromptLens][${entry_.level.toUpperCase()}][${entry_.event || '-'}] ${entry_.message || ''}`,
       entry_.data ? entry_.data : '');
   }
 

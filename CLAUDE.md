@@ -1,4 +1,4 @@
-\# PromptPilot 项目上下文
+\# PromptLens 项目上下文
 
 
 
@@ -6,7 +6,7 @@
 
 
 
-PromptPilot 是一个 Chrome Manifest V3 浏览器插件，用于把网页图片、上传图片、粘贴图片转成 AI 文生图提示词，并继续调用 Image API 生成图片。
+PromptLens 是一个 Chrome Manifest V3 浏览器插件，用于把网页图片、上传图片、粘贴图片转成 AI 文生图提示词，并继续调用 Image API 生成图片。
 
 
 
@@ -442,7 +442,7 @@ data: {"status":"failed","failure\_reason":"output\_moderation","error":"..."}
 
 当前头部 UI 太丑，需要保持：
 
-\- PromptPilot 标题
+\- PromptLens 标题
 
 \- 智能图像提示词助手
 

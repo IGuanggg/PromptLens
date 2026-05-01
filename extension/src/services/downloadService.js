@@ -86,7 +86,7 @@ function createImageFilename(index) {
     pad(now.getMinutes()),
     pad(now.getSeconds())
   ].join('');
-  return `promptpilot_${stamp}_${pad(index)}.png`;
+  return `promptlens_${stamp}_${pad(index)}.png`;
 }
 
 function pad(value) {

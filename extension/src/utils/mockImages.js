@@ -40,7 +40,7 @@ function createMockImageDataUrl(label, index, width, height) {
 }
 
 function providerLabel(index) {
-  return `PromptPilot Mock ${index + 1}`;
+  return `PromptLens Mock ${index + 1}`;
 }
 
 function escapeSvg(value) {

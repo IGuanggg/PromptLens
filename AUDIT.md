@@ -1,4 +1,4 @@
-# PromptPilot 尺寸升级审查报告
+# PromptLens 尺寸升级审查报告
 
 ## 修改目标
 
@@ -79,4 +79,4 @@ Side Panel 读取 settings 后调用 `getOutputSize()`，得到 `width`、`heigh
 
 如果 provider 不支持原始 `requestedSize`，并且 `sizeFormat = "openai-mapped"`，会在 adapter 层映射为兼容尺寸，并在日志里记录 `IMAGE_SIZE_MAPPED`。
 
-OpenAI 兼容图像接口常见兼容尺寸为 `1024x1024`、`1536x1024`、`1024x1536`、`auto`。因此 1K / 2K / 4K 是 PromptPilot 的目标输出尺寸，实际发送尺寸可能被 provider 映射。
+OpenAI 兼容图像接口常见兼容尺寸为 `1024x1024`、`1536x1024`、`1024x1536`、`auto`。因此 1K / 2K / 4K 是 PromptLens 的目标输出尺寸，实际发送尺寸可能被 provider 映射。

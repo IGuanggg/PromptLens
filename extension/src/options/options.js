@@ -333,7 +333,7 @@ function bindActions() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `promptpilot-settings-${Date.now()}.json`;
+    a.download = `promptlens-settings-${Date.now()}.json`;
     a.click();
     URL.revokeObjectURL(url);
     appendLog({ level: 'info', apiType: 'system', event: 'SETTINGS_EXPORTED', message: '设置已导出' });
@@ -377,7 +377,7 @@ function bindActions() {
     const file = event.target.files?.[0];
     if (!file) return;
     const payload = JSON.parse(await file.text());
-    if (payload?.app !== 'PromptPilot' || !Array.isArray(payload.items)) {
+    if (!['PromptLens', 'PromptPilot'].includes(payload?.app) || !Array.isArray(payload.items)) {
       throw new Error('历史文件格式无效');
     }
     await importHistory(payload.items);
@@ -398,7 +398,7 @@ function bindActions() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `promptpilot-debug-${Date.now()}.json`;
+    a.download = `promptlens-debug-${Date.now()}.json`;
     a.click();
     URL.revokeObjectURL(url);
     saveStatus.textContent = `已导出 ${logs.length} 条日志`;

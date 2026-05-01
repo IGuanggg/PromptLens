@@ -97,7 +97,7 @@ export async function generatePromptFromImage({ currentImage, extraInstruction, 
       });
     }
     if (!en) {
-      console.warn('[PromptPilot] 英文提示词为空');
+      console.warn('[PromptLens] 英文提示词为空');
     }
 
     appendLog({
@@ -133,7 +133,7 @@ export async function generatePromptFromImage({ currentImage, extraInstruction, 
 
     // Only fall back to mock if user explicitly enabled mockMode
     if (mockMode) {
-      console.warn('[PromptPilot] mockMode enabled, returning mock result after error:', error?.message);
+      console.warn('[PromptLens] mockMode enabled, returning mock result after error:', error?.message);
       return mockPromptResult(type);
     }
 

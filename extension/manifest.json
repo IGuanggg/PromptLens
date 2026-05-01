@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "PromptPilot - 图片转提示词",
+  "name": "PromptLens",
   "version": "0.1.0",
   "description": "右键网页图片，弹出浮动窗口，反推 AI 绘图提示词。",
   "icons": {
@@ -31,12 +31,17 @@
   "options_page": "src/options/options.html",
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["src/contentScript.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "src/contentScript.js"
+      ],
       "run_at": "document_idle"
     }
   ],
   "action": {
-    "default_title": "PromptPilot — 点击打开面板"
-  }
+    "default_title": "PromptLens - 点击打开面板"
+  },
+  "short_name": "PromptLens"
 }
