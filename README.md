@@ -168,6 +168,29 @@ PromptLens/
 - 保留 `promptpilotDraft`、`promptpilotHistory`、`promptpilotLogs` 等本地 storage key，避免旧用户配置、草稿和历史记录丢失。
 - 保留旧版 PromptPilot 历史导出文件导入兼容，方便从旧版本平滑迁移。
 
+### v0.4.0 — API v2 升级 & 存储修复 & 超时优化 (2026-05)
+
+**Grsai API v2 升级：**
+- 双通道统一端点：`/v1/draw/completions` + `/v1/draw/nano-banana` → `POST /v1/api/generate`
+- 结果轮询升级：`POST /v1/draw/result` → `GET /v1/api/result?id={taskId}`
+- 载荷字段适配：`urls` → `images`，新增 `replyType: "json"`，移除 `webHook`/`shutProgress`/`quality`
+- gpt-image-2 通道 `aspectRatio` 改为尺寸格式（如 `"1920x1080"`），nano-banana 保持比例格式
+- 同步结果快速返回：API 直接返回 `status: "succeeded"` 时跳过轮询
+
+**超时优化：**
+- 提交请求超时：60s → 300s（5 分钟），解决后台出图成功但客户端超时断开的问题
+- 轮询单次请求超时：30s → 120s（2 分钟），总轮询预算 240 次 × 3s ≈ 12 分钟
+
+**IndexedDB 存储修复：**
+- **缩略图自动生成**：源图保存到 IndexedDB 后自动创建 256px WebP 缩略图，修复历史缩略图为空的问题
+- **Blob 孤儿清理**：新增 `collectReferencedBlobIds()` 扫描全部历史引用，`scheduleBlobCleanup()` 在历史变更后自动清理孤儿 blob
+- **历史迁移**：新增 `migrateHistoryImagesToBlobStore()` 懒迁移，将旧历史条目中的 base64 dataUrl 转存到 IndexedDB 并释放 storage 配额
+- **CORS 诊断**：远程图片 fetch 失败时记录 `BLOB_PERSIST_FETCH_FAILED` 调试日志
+
+**其他修复：**
+- 修复设置页 `updateResolutionDescription` 函数未定义导致清晰度描述不更新
+- 为 `openDockedPanel` 的 300ms 延迟增加文档注释说明 runtime message 竞态与 storage fallback
+
 ### v0.3.1 — 通知提醒 & 图片持久化 & 粘贴修复 (2026-05)
 
 **右键发送通知：**

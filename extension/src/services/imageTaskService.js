@@ -50,18 +50,36 @@ export function normalizeImageTaskFailure(task, provider) {
   });
 }
 
-export async function pollImageResult({ taskId, baseUrl, resultEndpoint, apiKey, pollIntervalMs, maxPollCount, provider }) {
+export async function pollImageResult({
+  taskId,
+  baseUrl,
+  resultEndpoint,
+  apiKey,
+  pollIntervalMs,
+  maxPollCount,
+  provider,
+  resultMethod = 'GET',
+  resultIdMode = 'query',
+  resultIdParam = 'id',
+  trace = null
+}) {
   const headers = { 'Content-Type': 'application/json' };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  const method = String(resultMethod || 'POST').toUpperCase();
+  const idParam = resultIdParam || 'id';
+  const useQueryId = method === 'GET' || resultIdMode === 'query';
+  const traceData = normalizeTrace(trace);
 
-  appendLog({ level: 'info', apiType: 'image', event: 'IMAGE_TASK_POLL_START', provider, message: `Polling ${taskId}`, data: { taskId, resultEndpoint } });
+  appendLog({ level: 'info', apiType: 'image', event: 'IMAGE_TASK_POLL_START', provider, message: `Polling ${taskId}`, data: { ...traceData, taskId, resultEndpoint, resultMethod: method, resultIdMode, resultIdParam: idParam } });
 
   for (let i = 0; i < maxPollCount; i++) {
     await wait(pollIntervalMs);
     const url = `${baseUrl.replace(/\/+$/, '')}${resultEndpoint}`;
+    const pollUrl = useQueryId ? appendQueryParam(url, idParam, taskId) : url;
+    const body = useQueryId ? undefined : JSON.stringify({ [idParam]: taskId });
     let raw;
     try {
-      raw = await fetchJsonWithTimeout(url, { method: 'POST', headers, body: JSON.stringify({ id: taskId }) }, 30000, { apiType: 'image', provider });
+      raw = await fetchJsonWithTimeout(pollUrl, { method, headers, body }, 120000, { apiType: 'image', provider });
     } catch (e) {
       if (i >= maxPollCount - 1) throw createAppError({ code: ERROR_CODES.TASK_FAILED, message: `Poll failed after ${i + 1} attempts`, provider, raw: { taskId }, retryable: true });
       continue;
@@ -74,11 +92,11 @@ export async function pollImageResult({ taskId, baseUrl, resultEndpoint, apiKey,
     const status = String(getByPath(raw, 'data.status') || raw?.status || '').toLowerCase();
     const progress = Number(getByPath(raw, 'data.progress') || raw?.progress || 0);
 
-    appendLog({ level: 'info', apiType: 'image', event: 'IMAGE_TASK_POLL', provider, message: `Poll ${i + 1}: ${status} ${progress}%`, data: { taskId, pollIndex: i, status, progress } });
+    appendLog({ level: 'info', apiType: 'image', event: 'IMAGE_TASK_POLL', provider, message: `Poll ${i + 1}: ${status} ${progress}%`, data: { ...traceData, taskId, pollIndex: i, status, progress, resultMethod: method } });
 
     if (['succeeded','success','completed','done'].includes(status)) {
       const results = getByPath(raw, 'data.results') || raw?.results || [];
-      appendLog({ level: 'info', apiType: 'image', event: 'IMAGE_TASK_SUCCEEDED', provider, message: `Task ${taskId} done`, data: { taskId, resultCount: results.length } });
+      appendLog({ level: 'info', apiType: 'image', event: 'IMAGE_TASK_SUCCEEDED', provider, message: `Task ${taskId} done`, data: { ...traceData, taskId, resultCount: results.length } });
       return { images: results.map((item, idx) => ({ id: item.id || `${taskId}_${idx}`, url: item.url || item.image || '', thumbUrl: item.url || item.image || '', label: `结果 ${idx + 1}`, provider, width: 0, height: 0 })), raw: { taskId, resultRaw: raw } };
     }
 
@@ -90,4 +108,17 @@ export async function pollImageResult({ taskId, baseUrl, resultEndpoint, apiKey,
   }
 
   throw createAppError({ code: ERROR_CODES.IMAGE_TASK_TIMEOUT, message: `任务轮询超时 (${maxPollCount}次)`, provider, raw: { taskId, maxPollCount }, retryable: true });
+}
+
+function appendQueryParam(url, key, value) {
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+}
+
+function normalizeTrace(trace) {
+  const data = {};
+  if (trace?.requestId) data.requestId = trace.requestId;
+  if (trace?.batchId) data.batchId = trace.batchId;
+  if (trace?.angleKey) data.angleKey = trace.angleKey;
+  return data;
 }

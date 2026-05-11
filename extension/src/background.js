@@ -177,6 +177,9 @@ async function openDockedPanel(tab, payload) {
   try {
     await chrome.sidePanel.open({ tabId: tab?.id });
     if (payload) {
+      // 300ms delay gives the Side Panel time to load and bind its runtime.onMessage listener.
+      // If the panel isn't ready yet, the message is silently dropped — but the image still
+      // arrives via pendingImage in chrome.storage.local (loaded by loadPendingImage on init).
       setTimeout(() => {
         chrome.runtime.sendMessage({ type: 'IMAGE_SELECTED', payload }).catch(() => {});
       }, 300);
@@ -203,7 +206,10 @@ async function openPopupPanel(payload) {
     try {
       await chrome.windows.update(popupWindowId, { focused: true });
       if (payload) {
-        setTimeout(() => {
+        // 300ms delay gives the Side Panel time to load and bind its runtime.onMessage listener.
+      // If the panel isn't ready yet, the message is silently dropped — but the image still
+      // arrives via pendingImage in chrome.storage.local (loaded by loadPendingImage on init).
+      setTimeout(() => {
           chrome.runtime.sendMessage({ type: 'IMAGE_SELECTED', payload }).catch(() => {});
         }, 300);
       }
