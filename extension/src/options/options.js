@@ -111,9 +111,8 @@ function loadSizeState(s) {
 
   updateSizePanelVisibility();
   updateFinalSize();
+  updateResolutionDescription();
 }
-
-function bindSizeControl() {
   document.getElementById('sizeMode').addEventListener('change', (e) => {
     sizeMode = e.target.value;
     updateSizePanelVisibility();
@@ -133,6 +132,7 @@ function bindSizeControl() {
   document.getElementById('resolutionPreset').addEventListener('change', (e) => {
     resolutionPreset = migrateResolutionPreset(e.target.value);
     updateFinalSize();
+    updateResolutionDescription();
   });
 
   document.getElementById('customWidth').addEventListener('input', () => {
@@ -237,6 +237,17 @@ function updateResolutionOptionsByModel(modelName) {
   }
   updateFinalSize();
   updateResolutionDescription?.();
+}
+
+function updateResolutionDescription() {
+  const el = document.getElementById('resolutionDescription');
+  if (!el) return;
+  const descriptions = {
+    '1k': '1920 × 1080，适合快速生成和普通预览',
+    '2k': '2560 × 1440，适合更清晰的作品输出',
+    '4k': '3840 × 2160，适合高质量大图输出'
+  };
+  el.textContent = descriptions[resolutionPreset] || '';
 }
 
 function updateSizePanelVisibility() {

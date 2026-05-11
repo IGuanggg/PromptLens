@@ -3,6 +3,7 @@ import { formatCompactDateTime } from '../utils/date.js';
 import { isQuotaExceededError, sanitizeHistoryItem } from '../utils/sanitize.js';
 import { loadSettings } from './storageService.js';
 import { createObjectUrlFromBlobId } from '../storage/imageBlobStore.js';
+import { saveImageBlob } from '../storage/imageBlobStore.js';
 
 export const HISTORY_KEY = 'promptpilotHistory';
 const DEFAULT_HISTORY_LIMIT = 30;
@@ -194,6 +195,28 @@ export function createHistoryExportFilename() {
 }
 
 /**
+ * Collect all blob IDs referenced across the entire history.
+ * Used to protect active blobs from cleanup.
+ * @returns {Promise<Set<string>>}
+ */
+export async function collectReferencedBlobIds() {
+  const history = await getHistory();
+  const ids = new Set();
+  for (const item of history) {
+    if (item.thumbnailBlobId) ids.add(item.thumbnailBlobId);
+    if (item.sourceImageBlobId) ids.add(item.sourceImageBlobId);
+    if (item.image?.blobId) ids.add(item.image.blobId);
+    for (const blobId of (item.resultBlobIds || [])) {
+      if (blobId) ids.add(blobId);
+    }
+    for (const r of (item.results || [])) {
+      if (r.blobId) ids.add(r.blobId);
+    }
+  }
+  return ids;
+}
+
+/**
  * Get the best available image URL for a history item (thumbnail > source blob > result blob > remote URL).
  */
 export async function getHistoryImageUrl(item) {
@@ -220,6 +243,62 @@ export async function getHistoryImageUrl(item) {
 
   // Fallback: remote URL or display URL
   return item.image?.displayUrl || item.image?.url || item.results?.[0]?.url || null;
+}
+
+/**
+ * One-time lazy migration: converts old history items with base64 dataUrl
+ * in image.dataUrl to IndexedDB blobs. Runs once per session on first access.
+ * Clears the dataUrl field after successful migration to save storage quota.
+ */
+let _migrationRun = false;
+
+export async function migrateHistoryImagesToBlobStore() {
+  if (_migrationRun) return;
+  _migrationRun = true;
+
+  const history = await getHistory();
+  const toMigrate = history.filter((item) =>
+    item.image?.dataUrl && String(item.image.dataUrl).startsWith('data:') && !item.image?.blobId
+  );
+
+  if (toMigrate.length === 0) return;
+
+  console.log(`[PromptLens] Migrating ${toMigrate.length} history items with base64 images to IndexedDB...`);
+
+  let migrated = 0;
+  for (const item of toMigrate) {
+    try {
+      const dataUrl = item.image.dataUrl;
+      const res = await fetch(dataUrl);
+      const blob = await res.blob();
+      if (!blob || blob.size === 0) continue;
+
+      const saved = await saveImageBlob({
+        blob,
+        mimeType: blob.type || 'image/png',
+        kind: 'source',
+        sourceUrl: item.image.url || '',
+        width: item.image.width || 0,
+        height: item.image.height || 0
+      });
+
+      if (saved) {
+        item.image.blobId = saved.id;
+        item.sourceImageBlobId = saved.id;
+        item.image.dataUrl = ''; // free the storage quota
+        migrated++;
+      }
+    } catch (e) {
+      // If fetch fails (CORS, expired data URL, etc.), just clear the stale dataUrl
+      item.image.dataUrl = '';
+      console.warn('[PromptLens] Migration failed for item', item.id, e?.message);
+    }
+  }
+
+  if (migrated > 0) {
+    await saveHistoryList(history);
+    console.log(`[PromptLens] Migrated ${migrated} history images to IndexedDB`);
+  }
 }
 
 function getHistoryLimit(settings) {

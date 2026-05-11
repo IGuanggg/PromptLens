@@ -39,11 +39,9 @@ export const DEFAULT_SETTINGS = {
     finalWidth: 1080,
     finalHeight: 1080,
     requestMode: 'async',
-    resultEndpoint: '/v1/draw/result',
+    resultEndpoint: '/v1/api/result',
     pollIntervalMs: 3000,
     maxPollCount: 240,
-    webHook: '-1',
-    shutProgress: false,
     customEndpointOverride: false,
     custom: {
       method: 'POST',

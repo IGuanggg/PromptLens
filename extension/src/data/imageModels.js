@@ -4,7 +4,8 @@ const IMAGE_MODELS = [
   {
     id: 'gpt-image-2-vip', name: 'gpt-image-2-vip', displayName: 'gpt-image-2-vip',
     channel: 'image', channelLabel: 'GPT Image API',
-    submitEndpoint: '/v1/draw/completions', resultEndpoint: '/v1/draw/result',
+    submitEndpoint: '/v1/api/generate', resultEndpoint: '/v1/api/result',
+    resultMethod: 'GET', resultIdMode: 'query',
     creditCost: 900,
     supportsTextToImage: true, supportsImageToImage: true,
     supportsReferenceImage: true, supportsMultiAngle: true,
@@ -18,7 +19,8 @@ const IMAGE_MODELS = [
   {
     id: 'gpt-image-2', name: 'gpt-image-2', displayName: 'gpt-image-2',
     channel: 'image', channelLabel: 'GPT Image API',
-    submitEndpoint: '/v1/draw/completions', resultEndpoint: '/v1/draw/result',
+    submitEndpoint: '/v1/api/generate', resultEndpoint: '/v1/api/result',
+    resultMethod: 'GET', resultIdMode: 'query',
     creditCost: 600,
     supportsTextToImage: true, supportsImageToImage: true,
     supportsReferenceImage: true, supportsMultiAngle: true,
@@ -32,7 +34,8 @@ const IMAGE_MODELS = [
   {
     id: 'nano-banana-pro', name: 'nano-banana-pro', displayName: 'nano-banana-pro',
     channel: 'nano-banana', channelLabel: 'Nano Banana API',
-    submitEndpoint: '/v1/draw/nano-banana', resultEndpoint: '/v1/draw/result',
+    submitEndpoint: '/v1/api/generate', resultEndpoint: '/v1/api/result',
+    resultMethod: 'GET', resultIdMode: 'query',
     creditCost: 1800,
     supportsTextToImage: true, supportsImageToImage: true,
     supportsReferenceImage: true, supportsMultiAngle: true,
@@ -46,7 +49,8 @@ const IMAGE_MODELS = [
   {
     id: 'nano-banana-2', name: 'nano-banana-2', displayName: 'nano-banana-2',
     channel: 'nano-banana', channelLabel: 'Nano Banana API',
-    submitEndpoint: '/v1/draw/nano-banana', resultEndpoint: '/v1/draw/result',
+    submitEndpoint: '/v1/api/generate', resultEndpoint: '/v1/api/result',
+    resultMethod: 'GET', resultIdMode: 'query',
     creditCost: 1200,
     supportsTextToImage: true, supportsImageToImage: true,
     supportsReferenceImage: true, supportsMultiAngle: true,
@@ -60,7 +64,8 @@ const IMAGE_MODELS = [
   {
     id: 'nano-banana-fast', name: 'nano-banana-fast', displayName: 'nano-banana-fast',
     channel: 'nano-banana', channelLabel: 'Nano Banana API',
-    submitEndpoint: '/v1/draw/nano-banana', resultEndpoint: '/v1/draw/result',
+    submitEndpoint: '/v1/api/generate', resultEndpoint: '/v1/api/result',
+    resultMethod: 'GET', resultIdMode: 'query',
     creditCost: 440,
     supportsTextToImage: true, supportsImageToImage: true,
     supportsReferenceImage: true, supportsMultiAngle: false,
@@ -83,12 +88,12 @@ export function getImageModelConfig(modelName) {
 
 export function getSubmitEndpointForModel(modelName) {
   const m = getImageModelConfig(modelName);
-  return m?.submitEndpoint || '/v1/draw/completions';
+  return m?.submitEndpoint || '/v1/api/generate';
 }
 
 export function getResultEndpointForModel(modelName) {
   const m = getImageModelConfig(modelName);
-  return m?.resultEndpoint || '/v1/draw/result';
+  return m?.resultEndpoint || '/v1/api/result';
 }
 
 // ── Capability queries ──
@@ -169,8 +174,7 @@ export function validateNanoBananaPayload(body) {
   if (!body.prompt) errors.push('prompt 为空');
   if (!body.aspectRatio) errors.push('aspectRatio 为空');
   if (!body.imageSize) errors.push('imageSize 为空');
-  if (body.webHook !== '-1') errors.push('webHook 必须是 -1');
-  if (!Array.isArray(body.urls)) errors.push('urls 必须是数组');
+  if (!Array.isArray(body.images)) errors.push('images 必须是数组');
   if ('size' in body) errors.push('Nano Banana 不允许传 size');
   if (errors.length) {
     const error = new Error('Nano Banana 请求参数不完整：' + errors.join('，'));

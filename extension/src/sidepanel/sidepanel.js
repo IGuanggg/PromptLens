@@ -4,7 +4,7 @@ import { generatePromptFromImage, enhancePrompt } from '../services/promptServic
 import { generateImages, generateMultiAngleImages } from '../services/imageService.js';
 import { downloadImage, downloadAllImages } from '../services/downloadService.js';
 import { clearDraft, restoreDraft, saveDraft } from '../services/draftService.js';
-import { clearHistory, createHistoryExportFilename, createHistoryItemFromState, deleteHistoryItem, exportHistory, getHistory, importHistory, saveHistoryItem } from '../services/historyService.js';
+import { clearHistory, createHistoryExportFilename, createHistoryItemFromState, deleteHistoryItem, exportHistory, getHistory, importHistory, saveHistoryItem, collectReferencedBlobIds, migrateHistoryImagesToBlobStore } from '../services/historyService.js';
 import { getLogs, clearLogs, getLastCall, initLogService, setLogSettings, setLogLimit, appendLog } from '../services/logService.js';
 import { getOutputSize, migrateResolutionPreset, migrateSizeMode } from '../utils/size.js';
 import { statusText } from '../utils/format.js';
@@ -12,7 +12,7 @@ import { ERROR_CODES, getErrorMessage, normalizeError, sanitizeErrorLog } from '
 import { formatDateTime } from '../utils/date.js';
 import { ALLOWED_IMAGE_TYPES } from '../utils/fileSize.js';
 import { normalizeImageInput, handleLocalFile, handleDropFile, handlePasteEvent } from '../services/imageInputService.js';
-import { saveImageBlob, getImageBlob, createObjectUrlFromBlobId } from '../storage/imageBlobStore.js';
+import { saveImageBlob, getImageBlob, createObjectUrlFromBlobId, cleanupBlobs } from '../storage/imageBlobStore.js';
 import { createThumbnailBlob } from '../utils/imageThumbnail.js';
 
 const state = {
@@ -50,6 +50,8 @@ async function init() {
   bindImageInputEvents();
   await loadDraft();
   await loadPendingImage();
+  // Lazy migration: convert old base64 dataUrl items to IndexedDB blobs
+  migrateHistoryImagesToBlobStore().catch((e) => console.warn('[PromptLens] history migration skipped:', e?.message));
   await refreshApiStatus();
   renderAll();
 }
@@ -323,11 +325,37 @@ async function persistSourceBlob(image) {
       } else if (image.file) {
         blob = image.file;
       } else if (image.displayUrl && !String(image.displayUrl).startsWith('blob:')) {
-        try { const res = await fetch(image.displayUrl); blob = await res.blob(); } catch { /* remote may fail */ }
+        try {
+          const res = await fetch(image.displayUrl);
+          blob = await res.blob();
+        } catch (fetchErr) {
+          // CORS, anti-hotlink, or network error — the image is still shown via <img> tag
+          appendLog({
+            level: 'warn',
+            apiType: 'system',
+            event: 'BLOB_PERSIST_FETCH_FAILED',
+            provider: 'db',
+            message: `Failed to fetch source image for persistence: ${fetchErr?.message || 'unknown'}`,
+            data: { sourceUrl: String(image.displayUrl).slice(0, 120), isCors: String(fetchErr?.message || '').includes('CORS') || fetchErr?.name === 'TypeError' }
+          });
+        }
       }
       if (blob && blob.size > 0) {
         const saved = await saveImageBlob({ blob, mimeType: blob.type || 'image/png', kind: 'source', sourceUrl: image.url || '', width: image.width || 0, height: image.height || 0 });
-        if (saved) { image.blobId = saved.id; }
+        if (saved) {
+          image.blobId = saved.id;
+          // Also create and persist a thumbnail for history list display
+          try {
+            const thumbBlob = await createThumbnailBlob(blob, { maxWidth: 256, maxHeight: 256, type: 'image/webp', quality: 0.7 });
+            if (thumbBlob && thumbBlob.size > 0) {
+              const thumbSaved = await saveImageBlob({ blob: thumbBlob, mimeType: 'image/webp', kind: 'thumbnail', sourceUrl: image.url || '', width: image.width || 0, height: image.height || 0 });
+              if (thumbSaved) {
+                image.thumbnailBlobId = thumbSaved.id;
+                appendLog({ level: 'info', apiType: 'system', event: 'THUMBNAIL_PERSISTED', provider: 'db', message: `Thumbnail blob saved: ${thumbSaved.id}`, data: { sourceBlobId: saved.id, thumbnailBlobId: thumbSaved.id } });
+              }
+            }
+          } catch (thumbErr) { console.warn('[PromptLens] thumbnail blob creation failed (non-blocking)', thumbErr?.message); }
+        }
       }
     } catch (e) { console.warn('[PromptLens] blob persist failed (non-blocking)', e?.message); }
   }, 0);
@@ -1013,6 +1041,7 @@ async function handleDeleteHistoryItem(id) {
   await deleteHistoryItem(id);
   state.historyItems = await getHistory();
   renderHistoryList();
+  scheduleBlobCleanup();
 }
 
 async function handleClearHistory() {
@@ -1020,6 +1049,7 @@ async function handleClearHistory() {
   await clearHistory();
   state.historyItems = [];
   renderHistoryList();
+  scheduleBlobCleanup();
   toast('历史记录已清空');
 }
 
@@ -1045,6 +1075,7 @@ async function persistCurrentHistory() {
     if (state.settings?.storage?.saveResults === false) historyItem.results = [];
     const saved = await saveHistoryItem(historyItem);
     if (saved?.reduced) toast('该记录过大，仅保存可恢复的 Prompt 信息');
+    scheduleBlobCleanup();
   } catch (error) {
     appendLog({
       level: 'warn',
@@ -1066,6 +1097,25 @@ function queueSaveDraft() {
   if (state.settings?.storage?.autoSaveDraft === false) return;
   clearTimeout(draftTimer);
   draftTimer = setTimeout(() => { saveDraft(state).catch((error) => console.warn('Failed to save draft:', error)); }, 800);
+}
+
+/**
+ * Schedule a deferred blob cleanup. Uses the history to determine which blob IDs
+ * are still referenced, then deletes orphaned blobs from IndexedDB.
+ * Runs after a 2s debounce to avoid thrashing during rapid saves.
+ */
+let _cleanupTimer = null;
+function scheduleBlobCleanup() {
+  clearTimeout(_cleanupTimer);
+  _cleanupTimer = setTimeout(async () => {
+    try {
+      const referencedIds = await collectReferencedBlobIds();
+      const deleted = await cleanupBlobs({ referencedIds });
+      if (deleted.length > 0) {
+        console.log('[PromptLens] Blob cleanup: deleted', deleted.length, 'orphaned blobs');
+      }
+    } catch (e) { console.warn('[PromptLens] Blob cleanup skipped:', e?.message); }
+  }, 2000);
 }
 
 function setTaskStatus(phase, message) { state.taskStatus = { phase, message }; }

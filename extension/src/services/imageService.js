@@ -20,10 +20,12 @@ export async function generateImages({
   size = `${width}x${height}`,
   dashscopeSize = `${width}*${height}`,
   outputSize = null,
-  settings = {}
+  settings = {},
+  trace = null
 }) {
   const api = settings?.imageApi || {};
   const type = api.type || IMAGE_API_TYPES.OPENAI_COMPATIBLE;
+  const logContext = createLogContext(trace, 'img');
   const finalOutputSize = outputSize ? {
     ...outputSize,
     dashscopeSize: outputSize.dashscopeSize || `${outputSize.width}*${outputSize.height}`
@@ -46,7 +48,8 @@ export async function generateImages({
     size: finalOutputSize.size,
     dashscopeSize: finalOutputSize.dashscopeSize,
     outputSize: finalOutputSize,
-    settings
+    settings,
+    trace: logContext
   };
 
   appendLog({
@@ -56,6 +59,7 @@ export async function generateImages({
     provider: type,
     message: `Image generate start: ${count} images, ${finalOutputSize.size}`,
     data: {
+      ...logContext,
       mode,
       count,
       width: finalOutputSize.width,
@@ -85,6 +89,7 @@ export async function generateImages({
       provider: type,
       message: `生成完成: ${images.length} 张图片`,
       data: {
+        ...logContext,
         imagesCount: images.length,
         requestedSize: finalOutputSize.size,
         resultSizes: images.map((image) => ({
@@ -96,7 +101,7 @@ export async function generateImages({
       }
     });
 
-    return { images };
+    return { images, provider: result.provider || type, raw: result.raw || null };
   } catch (error) {
     appendLog({
       level: 'error',
@@ -105,6 +110,7 @@ export async function generateImages({
       provider: type,
       message: `生成失败: ${error?.message || '未知错误'}`,
       data: {
+        ...logContext,
         code: error?.code || '',
         status: error?.status || 0,
         provider: error?.provider || type,
@@ -128,6 +134,7 @@ export async function generateMultiAngleImages({
 }) {
   const api = settings?.imageApi || {};
   const provider = api.type || IMAGE_API_TYPES.OPENAI_COMPATIBLE;
+  const batchContext = createLogContext({ batchId: createTraceId('multi') }, 'multi');
   const finalOutputSize = outputSize || getOutputSize({
     sizeMode: api.sizeMode,
     aspectRatio: api.aspectRatio,
@@ -144,6 +151,7 @@ export async function generateMultiAngleImages({
     provider,
     message: `Multi-angle generation start: ${finalOutputSize.size}`,
     data: {
+      ...batchContext,
       requestedSize: finalOutputSize.size,
       width: finalOutputSize.width,
       height: finalOutputSize.height,
@@ -167,6 +175,7 @@ export async function generateMultiAngleImages({
     provider,
     message: 'Created multi-angle prompts',
     data: {
+      ...batchContext,
       count: anglePrompts.length,
       angles: anglePrompts.map((item) => item.key)
     }
@@ -177,6 +186,10 @@ export async function generateMultiAngleImages({
 
   for (const angle of anglePrompts) {
     const anglePrompt = angle.anglePromptEn || angle.anglePromptZh;
+    const angleContext = createLogContext({
+      batchId: batchContext.batchId,
+      angleKey: angle.key
+    }, `angle_${angle.key}`);
     appendLog({
       level: 'info',
       apiType: 'image',
@@ -184,6 +197,7 @@ export async function generateMultiAngleImages({
       provider,
       message: `Generating ${angle.label}`,
       data: {
+        ...angleContext,
         angleKey: angle.key,
         label: angle.label,
         promptPreview: anglePrompt.slice(0, 240),
@@ -213,7 +227,8 @@ export async function generateMultiAngleImages({
         size: finalOutputSize.size,
         dashscopeSize: finalOutputSize.dashscopeSize,
         outputSize: finalOutputSize,
-        settings
+        settings,
+        trace: angleContext
       });
       const image = (result.images || [])[0];
       if (!image) throw new Error(`${angle.label} 未返回图片`);
@@ -233,6 +248,7 @@ export async function generateMultiAngleImages({
         provider,
         message: `${angle.label} generated`,
         data: {
+          ...angleContext,
           angleKey: angle.key,
           label: angle.label,
           requestedSize: finalOutputSize.size,
@@ -252,6 +268,7 @@ export async function generateMultiAngleImages({
         provider,
         message: `${angle.label} failed: ${error?.message || 'unknown error'}`,
         data: {
+          ...angleContext,
           angleKey: angle.key,
           label: angle.label,
           promptPreview: anglePrompt.slice(0, 240),
@@ -272,6 +289,7 @@ export async function generateMultiAngleImages({
     provider,
     message: failedCount ? `Multi-angle completed with ${failedCount} failed` : 'Multi-angle generation completed',
     data: {
+      ...batchContext,
       requestedSize: finalOutputSize.size,
       successCount,
       failedCount,
@@ -286,6 +304,7 @@ export async function generateMultiAngleImages({
       message: hint ? `多角度生成全部失败。${hint}` : '多角度生成全部失败',
       provider,
       raw: {
+        ...batchContext,
         requestedSize: finalOutputSize.size,
         providerSize: getProviderSize({
           requestedSize: finalOutputSize.size,
@@ -316,7 +335,7 @@ export async function generateMultiAngleImages({
 
 // ── Provider implementations ──
 
-async function callOpenAICompatibleImage({ api, prompt, count, width, height, size, dashscopeSize, outputSize }) {
+async function callOpenAICompatibleImage({ api, prompt, count, width, height, size, dashscopeSize, outputSize, trace }) {
   if (!api.baseUrl || !api.apiKey || !api.model) {
     return mockImages('openai-compatible-image-mock', count || 4, width, height);
   }
@@ -332,6 +351,7 @@ async function callOpenAICompatibleImage({ api, prompt, count, width, height, si
       provider: 'openai-compatible-image',
       message: `Image size mapped: ${requestedSize} -> ${providerSize}`,
       data: {
+        ...trace,
         requestedSize,
         providerSize,
         provider: 'openai-compatible-image',
@@ -345,7 +365,7 @@ async function callOpenAICompatibleImage({ api, prompt, count, width, height, si
     event: 'IMAGE_PAYLOAD_SIZE',
     provider: 'openai-compatible-image',
     message: `Image payload size: ${providerSize}`,
-    data: { requestedSize, providerSize, width, height, sizeFormat, provider: 'openai-compatible-image' }
+    data: { ...trace, requestedSize, providerSize, width, height, sizeFormat, provider: 'openai-compatible-image' }
   });
   const url = buildUrl(api.baseUrl, api.endpoint || '/v1/images/generations');
   const body = JSON.stringify({
@@ -360,17 +380,20 @@ async function callOpenAICompatibleImage({ api, prompt, count, width, height, si
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${api.apiKey}` },
     body
-  }, 60000, { apiType: 'image', provider: 'openai-compatible-image' });
+  }, 300000, { apiType: 'image', provider: 'openai-compatible-image' });
 
   return normalizeOpenAIImageResult(raw, 'openai-compatible-image', { width, height });
 }
 
 // ── Draw API: channel-aware submit + async poll ──
 
-async function callDrawApi({ api, prompt, referenceImage, width, height, dashscopeSize, outputSize, modelConfig, settings }) {
+async function callDrawApi({ api, prompt, referenceImage, width, height, dashscopeSize, outputSize, modelConfig, settings, trace }) {
   const baseUrl = (api.baseUrl || '').replace(/\/+$/, '');
   const submitUrl = `${baseUrl}${modelConfig.submitEndpoint}`;
-  const resultEp = api.resultEndpoint || modelConfig.resultEndpoint || '/v1/draw/result';
+  const resultEp = api.resultEndpoint || modelConfig.resultEndpoint || '/v1/api/result';
+  const resultMethod = api.resultMethod || modelConfig.resultMethod || 'GET';
+  const resultIdMode = api.resultIdMode || modelConfig.resultIdMode || 'query';
+  const resultIdParam = api.resultIdParam || modelConfig.resultIdParam || 'id';
   const channel = modelConfig.channel;
 
   // ── Prompt sanitizer ──
@@ -385,7 +408,7 @@ async function callDrawApi({ api, prompt, referenceImage, width, height, dashsco
       event: changed ? 'PROMPT_SANITIZER_APPLIED' : 'PROMPT_SANITIZER_SKIPPED',
       provider: 'draw-api',
       message: changed ? 'Prompt sanitized before generation' : 'Prompt sanitizer skipped (no changes)',
-      data: { enabled: true, enabledFrom: 'promptApi.enablePromptSanitizer', changed, originalLength: rawPrompt.length, sanitizedLength: sanitizedPrompt.length, mode: 'single' }
+      data: { ...trace, enabled: true, enabledFrom: 'promptApi.enablePromptSanitizer', changed, originalLength: rawPrompt.length, sanitizedLength: sanitizedPrompt.length, mode: 'single' }
     });
   } else {
     appendLog({
@@ -393,7 +416,7 @@ async function callDrawApi({ api, prompt, referenceImage, width, height, dashsco
       event: 'PROMPT_SANITIZER_SKIPPED',
       provider: 'draw-api',
       message: 'Prompt sanitizer disabled',
-      data: { enabled: false, enabledFrom: 'promptApi.enablePromptSanitizer', originalLength: rawPrompt?.length || 0 }
+      data: { ...trace, enabled: false, enabledFrom: 'promptApi.enablePromptSanitizer', originalLength: rawPrompt?.length || 0 }
     });
   }
   const finalPrompt = sanitizedPrompt || rawPrompt;
@@ -403,50 +426,50 @@ async function callDrawApi({ api, prompt, referenceImage, width, height, dashsco
   // Resolve reference image URLs
   const refUrl = typeof referenceImage === 'string' ? referenceImage :
     (referenceImage?.dataUrl || referenceImage?.displayUrl || referenceImage?.url || '');
-  const urls = refUrl ? [refUrl] : [];
+  const imagesArr = refUrl ? [refUrl] : [];
 
-  // Build payload per official API doc
+  // Build payload per new API doc (v2 unified endpoint)
   let payload;
   if (channel === 'nano-banana') {
-    // Nano Banana: aspectRatio + imageSize (no size field)
-    const imageSize = toApiImageSize(resolutionPreset);
-    // Use outputSize (from getOutputSize) as primary aspect ratio source, with Nano-aware fallback
+    // Nano Banana: aspectRatio (ratio) + imageSize (size label)
+    const imageSizeLabel = toApiImageSize(resolutionPreset);
     const resolvedAspectRatio = resolveAspectRatioForNano({ settings: settings || {}, currentImage: referenceImage, outputSize });
     const finalAspectRatio = resolvedAspectRatio || outputSize?.aspectRatio || api.aspectRatio || 'auto';
 
     // Capability check: ensure resolution is within model's supported range
     const safeRes = getSafeResolutionForModel(api.model, resolutionPreset);
     if (safeRes !== resolutionPreset) {
-      appendLog({ level: 'warn', apiType: 'image', event: 'IMAGE_MODEL_CAPABILITY_ADJUSTED', provider: 'draw-api', message: `Resolution adjusted for ${api.model}`, data: { model: api.model, fromResolution: resolutionPreset, toResolution: safeRes, reason: `model only supports: ${(getImageModelConfig(api.model)?.supportsResolutions || []).join(', ')}` } });
+      appendLog({ level: 'warn', apiType: 'image', event: 'IMAGE_MODEL_CAPABILITY_ADJUSTED', provider: 'draw-api', message: `Resolution adjusted for ${api.model}`, data: { ...trace, model: api.model, fromResolution: resolutionPreset, toResolution: safeRes, reason: `model only supports: ${(getImageModelConfig(api.model)?.supportsResolutions || []).join(', ')}` } });
     }
     const finalImageSize = toApiImageSize(safeRes);
 
     payload = {
       model: api.model, prompt: finalPrompt,
+      images: imagesArr,
       aspectRatio: finalAspectRatio,
       imageSize: finalImageSize,
-      urls, webHook: '-1', shutProgress: false
+      replyType: 'json'
     };
 
-    // Pre-submit validation
     validateNanoBananaPayload(payload);
 
     appendLog({ level: 'info', apiType: 'image', event: 'IMAGE_REQUEST_BUILD', provider: 'draw-api', message: `Nano Banana request: ${finalAspectRatio} ${finalImageSize}`,
-      data: { model: api.model, channel, endpoint: submitUrl, sizeMode: api.sizeMode, sourceImageWidth: referenceImage?.width || 0, sourceImageHeight: referenceImage?.height || 0, detectedAspectRatio: finalAspectRatio, aspectRatio: finalAspectRatio, resolutionPreset, imageSize: finalImageSize, urlsCount: urls.length, webHook: '-1' } });
+      data: { ...trace, model: api.model, channel, endpoint: submitUrl, sizeMode: api.sizeMode, sourceImageWidth: referenceImage?.width || 0, sourceImageHeight: referenceImage?.height || 0, detectedAspectRatio: finalAspectRatio, aspectRatio: finalAspectRatio, resolutionPreset, imageSize: finalImageSize, imagesCount: imagesArr.length, replyType: 'json' } });
   } else {
-    // Image channel: aspectRatio + quality (no size, no imageSize)
-    const aspectRatio = outputSize?.sizeMode === 'custom' ? `${width}x${height}` :
-      (outputSize?.aspectRatio || api.aspectRatio || '1:1');
+    // Image channel (gpt-image-2): aspectRatio uses dimensions format (e.g. "1920x1080") per new API
+    const aspectDims = outputSize?.sizeMode === 'custom'
+      ? `${width}x${height}`
+      : (outputSize?.size || `${width}x${height}`);
 
     payload = {
       model: api.model, prompt: finalPrompt,
-      aspectRatio,
-      quality: 'auto',
-      urls, webHook: '-1', shutProgress: false
+      images: imagesArr,
+      aspectRatio: aspectDims,
+      replyType: 'json'
     };
 
-    appendLog({ level: 'info', apiType: 'image', event: 'IMAGE_REQUEST_BUILD', provider: 'draw-api', message: `Image request: ${aspectRatio}`,
-      data: { model: api.model, channel, endpoint: submitUrl, aspectRatio, quality: 'auto', urlsCount: urls.length, webHook: '-1' } });
+    appendLog({ level: 'info', apiType: 'image', event: 'IMAGE_REQUEST_BUILD', provider: 'draw-api', message: `Image request: ${aspectDims}`,
+      data: { ...trace, model: api.model, channel, endpoint: submitUrl, aspectRatio: aspectDims, imagesCount: imagesArr.length, replyType: 'json' } });
   }
 
   // Validate single-model consistency
@@ -463,7 +486,7 @@ async function callDrawApi({ api, prompt, referenceImage, width, height, dashsco
 
   // Model-endpoint validation: if user overrides endpoint, verify it matches the model's expected endpoint
   if (api.customEndpointOverride && api.endpoint && api.endpoint !== modelConfig.submitEndpoint) {
-    appendLog({ level: 'warn', apiType: 'image', event: 'MODEL_ENDPOINT_MISMATCH', provider: 'draw-api', message: `Endpoint mismatch`, data: { model: api.model, channel, endpoint: api.endpoint, expectedEndpoint: modelConfig.submitEndpoint } });
+    appendLog({ level: 'warn', apiType: 'image', event: 'MODEL_ENDPOINT_MISMATCH', provider: 'draw-api', message: `Endpoint mismatch`, data: { ...trace, model: api.model, channel, endpoint: api.endpoint, expectedEndpoint: modelConfig.submitEndpoint } });
     throw createAppError({
       code: ERROR_CODES.MODEL_MISMATCH,
       message: `当前模型 ${api.model} 与接口 ${api.endpoint} 不匹配。预期接口：${modelConfig.submitEndpoint}。请关闭自定义 Endpoint 或切换正确模型。`,
@@ -471,11 +494,11 @@ async function callDrawApi({ api, prompt, referenceImage, width, height, dashsco
     });
   }
 
-  appendLog({ level: 'info', apiType: 'image', event: 'IMAGE_MODEL_ROUTE', provider: 'draw-api', message: `Route: ${channel}`, data: { selectedModel, channel, endpoint: submitUrl, resultEndpoint: resultEp, customEndpointOverride: api.customEndpointOverride || false } });
-  appendLog({ level: 'info', apiType: 'image', event: 'IMAGE_PAYLOAD_BUILT', provider: 'draw-api', message: `Payload: ${channel}`, data: { channel, ...payload } });
+  appendLog({ level: 'info', apiType: 'image', event: 'IMAGE_MODEL_ROUTE', provider: 'draw-api', message: `Route: ${channel}`, data: { ...trace, selectedModel, channel, endpoint: submitUrl, resultEndpoint: resultEp, resultMethod, resultIdMode, resultIdParam, customEndpointOverride: api.customEndpointOverride || false } });
+  appendLog({ level: 'info', apiType: 'image', event: 'IMAGE_PAYLOAD_BUILT', provider: 'draw-api', message: `Payload: ${channel}`, data: { ...trace, channel, ...payload } });
 
   // Submit
-  const submitTimeout = 60000;
+  const submitTimeout = 300000;
   const headers = { 'Content-Type': 'application/json' };
   if (api.apiKey) headers.Authorization = `Bearer ${api.apiKey}`;
 
@@ -489,7 +512,27 @@ async function callDrawApi({ api, prompt, referenceImage, width, height, dashsco
     return normalizeImageResult(submitRaw, 'draw-api', { width, height, requireImages: true });
   }
 
-  appendLog({ level: 'info', apiType: 'image', event: 'IMAGE_TASK_SUBMITTED', provider: 'draw-api', message: `Task: ${taskId}`, data: { taskId, model: api.model, channel } });
+  // Fast return: if the API returned sync results (status=succeeded with results array), skip polling
+  const syncStatus = String(submitRaw?.status || submitRaw?.data?.status || '').toLowerCase();
+  const syncResults = submitRaw?.results || submitRaw?.data?.results || [];
+  if (syncStatus === 'succeeded' && syncResults.length > 0) {
+    appendLog({ level: 'info', apiType: 'image', event: 'IMAGE_TASK_SYNC_RESULT', provider: 'draw-api', message: `Sync result for ${taskId}: ${syncResults.length} images`, data: { ...trace, taskId, resultCount: syncResults.length } });
+    return {
+      images: syncResults.map((item, idx) => ({
+        id: item.id || `${taskId}_${idx}`,
+        url: item.url || item.image || '',
+        thumbUrl: item.url || item.image || '',
+        label: `结果 ${idx + 1}`,
+        provider: 'draw-api',
+        width,
+        height
+      })),
+      provider: 'draw-api',
+      raw: { taskId, resultRaw: submitRaw }
+    };
+  }
+
+  appendLog({ level: 'info', apiType: 'image', event: 'IMAGE_TASK_SUBMITTED', provider: 'draw-api', message: `Task: ${taskId}`, data: { ...trace, taskId, model: api.model, channel } });
 
   // Poll
   const pollResult = await pollImageResult({
@@ -497,19 +540,23 @@ async function callDrawApi({ api, prompt, referenceImage, width, height, dashsco
     apiKey: api.apiKey,
     pollIntervalMs: api.pollIntervalMs || 3000,
     maxPollCount: api.maxPollCount || 240,
-    provider: 'draw-api'
+    provider: 'draw-api',
+    resultMethod,
+    resultIdMode,
+    resultIdParam,
+    trace
   });
 
   return { images: pollResult.images || [], provider: 'draw-api', raw: pollResult.raw || {} };
 }
 
-async function callCustomImage({ api, prompt, negativePrompt, referenceImage, mode, count, width, height, size, dashscopeSize, outputSize, settings }) {
+async function callCustomImage({ api, prompt, negativePrompt, referenceImage, mode, count, width, height, size, dashscopeSize, outputSize, settings, trace }) {
   const custom = api.custom || {};
 
   // ── Channel-aware routing for known models ──
   const modelConfig = getImageModelConfig(api.model);
   if (modelConfig && modelConfig.channel) {
-    return callDrawApi({ api, prompt, referenceImage, width, height, dashscopeSize, outputSize, modelConfig, settings });
+    return callDrawApi({ api, prompt, referenceImage, width, height, dashscopeSize, outputSize, modelConfig, settings, trace });
   }
 
   // ── Legacy custom API flow ──
@@ -527,7 +574,7 @@ async function callCustomImage({ api, prompt, negativePrompt, referenceImage, mo
     event: 'IMAGE_PAYLOAD_SIZE',
     provider: 'custom-image',
     message: `Custom image payload size: ${providerSize}`,
-    data: { requestedSize, providerSize, width, height, sizeFormat, provider: 'custom-image' }
+    data: { ...trace, requestedSize, providerSize, width, height, sizeFormat, provider: 'custom-image' }
   });
   const variables = {
     ...custom,
@@ -554,7 +601,7 @@ async function callCustomImage({ api, prompt, negativePrompt, referenceImage, mo
     method,
     headers: buildHeaders({ ...custom, apiKey: api.apiKey }),
     body: method.toUpperCase() === 'GET' ? undefined : parseTemplateBody(custom.requestTemplate || '', variables)
-  }, 60000, { apiType: 'image', provider: 'custom-image' });
+  }, 300000, { apiType: 'image', provider: 'custom-image' });
 
   // Handle async polling
   const finalRaw = custom.requestMode === 'async'
@@ -584,7 +631,7 @@ async function pollCustomImage(initialRaw, api, custom, variables) {
     const raw = await fetchJsonWithTimeout(statusUrl, {
       method: 'GET',
       headers: buildHeaders({ ...custom, apiKey: api.apiKey })
-    }, 60000, { apiType: 'image', provider: 'custom-image' });
+    }, 120000, { apiType: 'image', provider: 'custom-image' });
     const status = String(getByPath(raw, responseMap.status || 'status') || '').toLowerCase();
     if (['succeeded', 'success', 'completed', 'done', 'finished'].includes(status)) return raw;
     if (['failed', 'error', 'canceled', 'cancelled'].includes(status)) {
@@ -644,4 +691,16 @@ function createMultiAngleFailureHint({ api, outputSize }) {
     return '当前为高清多角度连续生成，请尝试切换到 1K 或确认模型支持当前比例的图像生成。';
   }
   return '';
+}
+
+function createTraceId(prefix = 'req') {
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createLogContext(trace, fallbackPrefix = 'req') {
+  const requestId = trace?.requestId || createTraceId(fallbackPrefix);
+  const context = { requestId };
+  if (trace?.batchId) context.batchId = trace.batchId;
+  if (trace?.angleKey) context.angleKey = trace.angleKey;
+  return context;
 }

@@ -19,7 +19,85 @@
 - `extension/src/utils/image.js`
 - `extension/src/utils/mockImages.js`
 
+## 审计发现 & 修复 (2026-05-11)
+
+### 修复 1: `collectReferencedBlobIds` + 接入 `cleanupBlobs`
+
+**问题**: `imageBlobStore.js` 的 `cleanupBlobs()` 接受 `referencedIds` 参数，但没有代码收集历史条目中的 blob ID 并传入。空 `referencedIds` 会导致所有 blob 被当作孤儿删除。
+
+**修复**:
+- 在 `historyService.js` 新增 `collectReferencedBlobIds()` — 扫描全部历史记录，收集 `thumbnailBlobId`、`sourceImageBlobId`、`image.blobId`、`resultBlobIds`、`results[].blobId`。
+- 在 `sidepanel.js` 新增 `scheduleBlobCleanup()` — 2 秒防抖后执行清理。
+- 在 `persistCurrentHistory`、`handleDeleteHistoryItem`、`handleClearHistory` 中调用清理。
+
+### 修复 2: 缩略图 Blob 在保存时生成
+
+**问题**: `createThumbnailBlob` 已在 `sidepanel.js` 导入但从未调用。`createHistoryItemFromState` 存储 `thumbnailBlobId`（来自 `currentImage.thumbnailBlobId`），但无代码设置该字段。
+
+**修复**:
+- 在 `persistSourceBlob()` 中，源图 Blob 保存成功后立即调用 `createThumbnailBlob(blob, { maxWidth: 256, maxHeight: 256 })` 生成 256px WebP 缩略图。
+- 缩略图也保存到 IndexedDB，并将返回的 `blobId` 写入 `image.thumbnailBlobId`。
+- 历史缩略图现在可走完整 5 级加载链：缩略图 blob → 源图 blob → 结果 blob → 远程 URL → 占位符。
+
+### 修复 3: `persistSourceBlob` CORS 失败可诊断
+
+**问题**: 右键 URL 图片的 remote fetch 静默失败，无法诊断 CORS/防盗链问题。
+
+**修复**:
+- 在 fetch 失败时写入 `BLOB_PERSIST_FETCH_FAILED` 日志事件，包含 sourceUrl 前缀和 isCors 标记。
+
+### 修复 4: `updateResolutionDescription` 未定义（已定义）
+
+**问题**: `options.js` 第 239 行调用 `updateResolutionDescription?.()`，但该函数未定义。虽不会崩溃（可选链），但 `#resolutionDescription` 描述文本永不更新。
+
+**修复**:
+- 在 `options.js` 中定义 `updateResolutionDescription()`，根据 `resolutionPreset`（1k/2k/4k）更新 `#resolutionDescription` 元素。
+- 在 `loadSizeState()` 和 `resolutionPreset.change` 事件中调用该函数。
+
+### 修复 5: 历史 base64 dataUrl → IndexedDB 迁移
+
+**问题**: 旧历史条目中 `image.dataUrl` 仍存有大图 base64，占空间且不能被 IndexedDB 加载路径读取。
+
+**修复**:
+- 在 `historyService.js` 新增 `migrateHistoryImagesToBlobStore()` — 扫描含 base64 dataUrl 的历史条目，转存到 IndexedDB，设置 `blobId`/`sourceImageBlobId`，清空 `dataUrl`。
+- 在 `sidepanel.js` init 流程中懒加载调用（静默失败不阻塞）。
+
+### 验证: 非问题项
+
+以下审计怀疑项经代码审查确认为非问题：
+
+- **Issue 4**: `sidepanel-debug.js` 硬编码路径 — 该文件不存在，调试功能全部在 `sidepanel.js` 内联。
+- **Issue 6**: 粘贴事件双重绑定 — `bindEvents()` 无 paste 绑定，按钮 + 键盘粘贴是互补关系。
+- **Issue 7**: `openDockedPanel` 300ms 延迟 — 已添加注释说明 load-timing 竞态 + `pendingImage` storage fallback。
+- **Issue 8**: 通知图标路径 — `extension/assets/icon128.png` 存在。
+- **Issue 10**: `handleRegenerate` 锁 — `handleGenerate()` 首行即检查 `_isGenerating`，已受保护。
+
 ## 新尺寸规则
+
+### Grsai API v2 升级 (2026-05-11)
+
+**变更**：根据新版 Grsai API 文档将双通道旧端点迁移到统一端点。
+
+**修改文件**：
+- `extension/src/data/imageModels.js` — 所有模型 endpoint 更新，新增 `resultMethod`/`resultIdMode`，修复 `validateNanoBananaPayload`
+- `extension/src/services/imageService.js` — `callDrawApi()` 载荷重构，同步结果快速返回
+- `extension/src/services/imageTaskService.js` — 轮询默认值从 POST/json 改为 GET/query
+- `extension/src/services/storageService.js` — 默认 `resultEndpoint` 更新，移除废弃字段
+
+**端点变更**：
+| 用途 | 旧 | 新 |
+|------|----|----|
+| 提交生成 | `POST /v1/draw/completions` 或 `/v1/draw/nano-banana` | `POST /v1/api/generate` |
+| 结果轮询 | `POST /v1/draw/result` (JSON body) | `GET /v1/api/result?id={taskId}` |
+
+**载荷变更**：
+- `urls` → `images`（参考图字段）
+- 新增 `replyType: "json"`
+- 移除 `webHook`, `shutProgress`, `quality`
+- gpt-image-2 的 `aspectRatio` 改为尺寸格式（如 `"1920x1080"`）
+- nano-banana 的 `aspectRatio` 保持比例格式（如 `"1:1"`）
+
+**同步快速返回**：提交后如 API 直接返回 `status: "succeeded"` + results，跳过轮询直接返回。
 
 | 比例 | 1K / 标准 | 2K / 高清 | 4K / 超清 |
 | --- | --- | --- | --- |
