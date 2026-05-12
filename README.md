@@ -159,15 +159,6 @@ PromptLens/
 ```
 
 ## 更新日志
-
-### v0.3.0 - 项目更名为 PromptLens (2026-05)
-
-- 项目与 GitHub 仓库统一更名为 **PromptLens**，仓库地址更新为 `https://github.com/IGuanggg/PromptLens`。
-- 浏览器插件显示名、侧边栏标题、设置页标题、文档标题和导出文件名前缀统一切换到 PromptLens / promptlens。
-- README、AUDIT、CLAUDE 和 docs 文档同步更新品牌名与项目目录名。
-- 保留 `promptpilotDraft`、`promptpilotHistory`、`promptpilotLogs` 等本地 storage key，避免旧用户配置、草稿和历史记录丢失。
-- 保留旧版 PromptPilot 历史导出文件导入兼容，方便从旧版本平滑迁移。
-
 ### v0.4.0 — API v2 升级 & 存储修复 & 超时优化 (2026-05)
 
 **Grsai API v2 升级：**
@@ -190,7 +181,13 @@ PromptLens/
 **其他修复：**
 - 修复设置页 `updateResolutionDescription` 函数未定义导致清晰度描述不更新
 - 为 `openDockedPanel` 的 300ms 延迟增加文档注释说明 runtime message 竞态与 storage fallback
+### v0.3.0 - 项目更名为 PromptLens (2026-05)
 
+- 项目与 GitHub 仓库统一更名为 **PromptLens**，仓库地址更新为 `https://github.com/IGuanggg/PromptLens`。
+- 浏览器插件显示名、侧边栏标题、设置页标题、文档标题和导出文件名前缀统一切换到 PromptLens / promptlens。
+- README、AUDIT、CLAUDE 和 docs 文档同步更新品牌名与项目目录名。
+- 保留 `promptpilotDraft`、`promptpilotHistory`、`promptpilotLogs` 等本地 storage key，避免旧用户配置、草稿和历史记录丢失。
+- 保留旧版 PromptPilot 历史导出文件导入兼容，方便从旧版本平滑迁移。
 ### v0.3.1 — 通知提醒 & 图片持久化 & 粘贴修复 (2026-05)
 
 **右键发送通知：**
