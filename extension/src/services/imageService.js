@@ -6,7 +6,7 @@ import { mockImages } from '../utils/mockImages.js';
 import { getOutputSize, mapSizeForOpenAIImages, getProviderSize } from '../utils/size.js';
 import { createMultiAnglePrompts } from './anglePromptService.js';
 import { appendLog } from './logService.js';
-import { getImageModelConfig, toApiImageSize, detectAspectRatioFromImage, resolveAspectRatioForNano, validateNanoBananaPayload, getSafeResolutionForModel, modelSupportsResolution, sanitizePromptForImageGeneration } from '../data/imageModels.js';
+import { findImageModelConfig, getImageModelConfig, buildImageApiPayload, validateNanoBananaPayload, sanitizePromptForImageGeneration } from '../data/imageModels.js';
 import { extractTaskId, pollImageResult, normalizeImageTaskFailure } from './imageTaskService.js';
 
 export async function generateImages({
@@ -421,56 +421,28 @@ async function callDrawApi({ api, prompt, referenceImage, width, height, dashsco
   }
   const finalPrompt = sanitizedPrompt || rawPrompt;
 
-  const resolutionPreset = outputSize?.resolutionPreset || api.resolutionPreset || '1k';
-
   // Resolve reference image URLs
   const refUrl = typeof referenceImage === 'string' ? referenceImage :
     (referenceImage?.dataUrl || referenceImage?.displayUrl || referenceImage?.url || '');
   const imagesArr = refUrl ? [refUrl] : [];
 
-  // Build payload per new API doc (v2 unified endpoint)
-  let payload;
-  if (channel === 'nano-banana') {
-    // Nano Banana: aspectRatio (ratio) + imageSize (size label)
-    const imageSizeLabel = toApiImageSize(resolutionPreset);
-    const resolvedAspectRatio = resolveAspectRatioForNano({ settings: settings || {}, currentImage: referenceImage, outputSize });
-    const finalAspectRatio = resolvedAspectRatio || outputSize?.aspectRatio || api.aspectRatio || 'auto';
+  // Build payload via shared v2 payload builder
+  const { payload, safeRes, imageSize: finalImageSize } = buildImageApiPayload({
+    model: api.model, prompt: finalPrompt,
+    outputSize, channel, images: imagesArr,
+    settings: settings || {}
+  });
 
-    // Capability check: ensure resolution is within model's supported range
-    const safeRes = getSafeResolutionForModel(api.model, resolutionPreset);
-    if (safeRes !== resolutionPreset) {
-      appendLog({ level: 'warn', apiType: 'image', event: 'IMAGE_MODEL_CAPABILITY_ADJUSTED', provider: 'draw-api', message: `Resolution adjusted for ${api.model}`, data: { ...trace, model: api.model, fromResolution: resolutionPreset, toResolution: safeRes, reason: `model only supports: ${(getImageModelConfig(api.model)?.supportsResolutions || []).join(', ')}` } });
-    }
-    const finalImageSize = toApiImageSize(safeRes);
-
-    payload = {
-      model: api.model, prompt: finalPrompt,
-      images: imagesArr,
-      aspectRatio: finalAspectRatio,
-      imageSize: finalImageSize,
-      replyType: 'json'
-    };
-
-    validateNanoBananaPayload(payload);
-
-    appendLog({ level: 'info', apiType: 'image', event: 'IMAGE_REQUEST_BUILD', provider: 'draw-api', message: `Nano Banana request: ${finalAspectRatio} ${finalImageSize}`,
-      data: { ...trace, model: api.model, channel, endpoint: submitUrl, sizeMode: api.sizeMode, sourceImageWidth: referenceImage?.width || 0, sourceImageHeight: referenceImage?.height || 0, detectedAspectRatio: finalAspectRatio, aspectRatio: finalAspectRatio, resolutionPreset, imageSize: finalImageSize, imagesCount: imagesArr.length, replyType: 'json' } });
-  } else {
-    // Image channel (gpt-image-2): aspectRatio uses dimensions format (e.g. "1920x1080") per new API
-    const aspectDims = outputSize?.sizeMode === 'custom'
-      ? `${width}x${height}`
-      : (outputSize?.size || `${width}x${height}`);
-
-    payload = {
-      model: api.model, prompt: finalPrompt,
-      images: imagesArr,
-      aspectRatio: aspectDims,
-      replyType: 'json'
-    };
-
-    appendLog({ level: 'info', apiType: 'image', event: 'IMAGE_REQUEST_BUILD', provider: 'draw-api', message: `Image request: ${aspectDims}`,
-      data: { ...trace, model: api.model, channel, endpoint: submitUrl, aspectRatio: aspectDims, imagesCount: imagesArr.length, replyType: 'json' } });
+  if (safeRes !== outputSize?.resolutionPreset && safeRes) {
+    appendLog({ level: 'warn', apiType: 'image', event: 'IMAGE_MODEL_CAPABILITY_ADJUSTED', provider: 'draw-api', message: `Resolution adjusted for ${api.model}`, data: { ...trace, model: api.model, fromResolution: outputSize?.resolutionPreset, toResolution: safeRes, reason: `model only supports: ${(getImageModelConfig(api.model)?.supportsResolutions || []).join(', ')}` } });
   }
+
+  if (channel === 'nano-banana') {
+    validateNanoBananaPayload(payload);
+  }
+
+  appendLog({ level: 'info', apiType: 'image', event: 'IMAGE_REQUEST_BUILD', provider: 'draw-api', message: `${channel} request: ${payload.aspectRatio}${finalImageSize ? ' ' + finalImageSize : ''}`,
+    data: { ...trace, model: api.model, channel, endpoint: submitUrl, aspectRatio: payload.aspectRatio, imageSize: finalImageSize, imagesCount: imagesArr.length, replyType: 'json' } });
 
   // Validate single-model consistency
   const selectedModel = api.model;
@@ -554,8 +526,8 @@ async function callCustomImage({ api, prompt, negativePrompt, referenceImage, mo
   const custom = api.custom || {};
 
   // ── Channel-aware routing for known models ──
-  const modelConfig = getImageModelConfig(api.model);
-  if (modelConfig && modelConfig.channel) {
+  const modelConfig = findImageModelConfig(api.model);
+  if (modelConfig?.channel) {
     return callDrawApi({ api, prompt, referenceImage, width, height, dashscopeSize, outputSize, modelConfig, settings, trace });
   }
 
@@ -594,7 +566,8 @@ async function callCustomImage({ api, prompt, negativePrompt, referenceImage, mo
     mode
   };
 
-  const generateUrl = buildUrl(api.baseUrl, api.endpoint, variables);
+  const urlSettings = { ...variables, apiKey: api.apiKey || '' };
+  const generateUrl = buildUrl(api.baseUrl, api.endpoint, urlSettings);
   const method = custom.method || 'POST';
 
   const raw = await fetchJsonWithTimeout(generateUrl, {
@@ -616,6 +589,45 @@ async function callCustomImage({ api, prompt, negativePrompt, referenceImage, mo
   });
 }
 
+/** Build a custom image API request (URL + headers + body) that matches
+ *  the legacy custom API flow. Used by both generateImages and the Options test button. */
+export function buildCustomImageRequest({ api, prompt, outputSize, count = 1, mode = 'standard', negativePrompt = '', referenceImage = '' }) {
+  const custom = api.custom || {};
+  const width = outputSize?.width || 1080;
+  const height = outputSize?.height || 1080;
+  const size = outputSize?.size || `${width}x${height}`;
+  const dashscopeSize = outputSize?.dashscopeSize || `${width}*${height}`;
+  const sizeFormat = api.sizeFormat || 'x';
+  const providerSize = getProviderSize({ requestedSize: size, dashscopeSize, sizeFormat });
+
+  const variables = {
+    ...custom,
+    model: api.model || '',
+    prompt,
+    negativePrompt,
+    referenceImage,
+    width,
+    height,
+    size,
+    dashscopeSize,
+    providerSize,
+    aspectRatio: outputSize?.aspectRatio || api.aspectRatio || '',
+    resolutionPreset: outputSize?.resolutionPreset || api.resolutionPreset || '',
+    sizeMode: outputSize?.sizeMode || api.sizeMode || '',
+    count,
+    mode
+  };
+
+  const urlSettings = { ...variables, apiKey: api.apiKey || '' };
+  const generateUrl = buildUrl(api.baseUrl, api.endpoint, urlSettings);
+  const method = (custom.method || 'POST').toUpperCase();
+
+  const headers = buildHeaders({ ...custom, apiKey: api.apiKey });
+  const body = method === 'GET' ? undefined : parseTemplateBody(custom.requestTemplate || '', variables);
+
+  return { url: generateUrl, method, headers, body, variables, providerSize, sizeFormat };
+}
+
 async function pollCustomImage(initialRaw, api, custom, variables) {
   const responseMap = custom.responseMap || {};
   const taskId = getByPath(initialRaw, responseMap.taskId || 'id');
@@ -627,7 +639,7 @@ async function pollCustomImage(initialRaw, api, custom, variables) {
   for (let i = 0; i < maxPolls; i++) {
     await wait(interval);
     const statusEndpoint = replaceTemplate(statusPath, { ...variables, id: taskId, taskId });
-    const statusUrl = buildUrl(api.baseUrl, statusEndpoint, { ...variables, id: taskId, taskId });
+    const statusUrl = buildUrl(api.baseUrl, statusEndpoint, { ...variables, apiKey: api.apiKey || '', id: taskId, taskId });
     const raw = await fetchJsonWithTimeout(statusUrl, {
       method: 'GET',
       headers: buildHeaders({ ...custom, apiKey: api.apiKey })

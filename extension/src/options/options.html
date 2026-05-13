@@ -101,11 +101,12 @@
 
             <div class="form-grid">
               <label>Base URL<input name="imageApi.baseUrl" placeholder="https://api.openai.com" /></label>
-              <label>Endpoint（由模型决定）
+              <div class="endpoint-block">
+                <span class="endpoint-label">Endpoint（由模型决定）</span>
                 <input name="imageApi.endpoint" id="imageEndpointInput" placeholder="由模型自动决定" readonly />
                 <span id="endpointPreview" class="field-description"></span>
                 <label class="switch-row" style="margin-top:4px"><input name="imageApi.customEndpointOverride" id="customEndpointOverrideCb" type="checkbox" /> 手动覆盖 Endpoint</label>
-              </label>
+              </div>
               <label>API Key<input name="imageApi.apiKey" type="password" /></label>
               <label>Model
                 <select name="imageApi.model" id="imageModelSelect">
@@ -169,9 +170,7 @@
                 <p class="hint-text">宽度和高度必须 ≥ 16，并会自动修正为偶数，长宽比不超过 3:1。</p>
               </div>
 
-              <div class="final-size" id="finalSizeLabel">
-                最终尺寸：1080 × 1080
-              </div>
+              <div class="final-size" id="finalSizeLabel">最终尺寸：1080 × 1080</div>
               <p id="sizeCompatibilityHint" class="size-compatibility-hint hidden">当前接口可能会在发送请求时自动映射为兼容尺寸，实际发送尺寸可在调试日志查看。</p>
             </div>
 

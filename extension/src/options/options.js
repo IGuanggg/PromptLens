@@ -4,8 +4,9 @@ import { clearHistory, createHistoryExportFilename, exportHistory, importHistory
 import { getLogs, clearLogs, getLastCall, initLogService, setLogSettings, setLogLimit } from '../services/logService.js';
 import { appendLog, updateLastCall } from '../services/logService.js';
 import { testPromptTextApi, testPromptVisionApi } from '../services/promptService.js';
+import { buildCustomImageRequest } from '../services/imageService.js';
 import { RATIO_OPTIONS, RESOLUTION_PRESETS, getOutputSize, mapSizeForOpenAIImages, migrateResolutionPreset, migrateSizeMode } from '../utils/size.js';
-import { getSubmitEndpointForModel, getResultEndpointForModel, getImageModelConfig } from '../data/imageModels.js';
+import { getSubmitEndpointForModel, getResultEndpointForModel, getImageModelConfig, findImageModelConfig, buildImageApiPayload } from '../data/imageModels.js';
 
 const form = document.getElementById('settingsForm');
 const saveStatus = document.getElementById('saveStatus');
@@ -18,6 +19,16 @@ let resolutionPreset = '1k';
 let customWidth = 1080;
 let customHeight = 1080;
 let refImage = null;
+
+/** Safe getElementById + addEventListener with null-guard */
+function on(id, event, handler) {
+  const el = document.getElementById(id);
+  if (!el) {
+    console.warn(`[Options] missing #${id}`);
+    return;
+  }
+  el.addEventListener(event, handler);
+}
 
 function getByPath(obj, path) {
   return path.split('.').reduce((acc, key) => acc?.[key], obj);
@@ -47,12 +58,16 @@ async function init() {
     }
   } catch { /* ignore */ }
 
+  // Tab switching must always work, independent of other bindings
   bindTabs();
-  bindActions();
-  bindCustomFields();
-  bindSizeControl();
-  loadSizeState(settings);
+
+  // Restore saved form values first, so custom field visibility reflects user config
   fillForm(settings);
+
+  try { bindActions(); } catch (e) { console.error('[Options] bindActions failed', e); }
+  try { bindCustomFields(); } catch (e) { console.error('[Options] bindCustomFields failed', e); }
+  try { bindSizeControl(); } catch (e) { console.error('[Options] bindSizeControl failed', e); }
+  try { loadSizeState(settings); } catch (e) { console.error('[Options] loadSizeState failed', e); }
   updateEndpointFromModel();
   const initModel = settings?.imageApi?.model || 'gpt-image-2';
   renderImageModelCapability(initModel);
@@ -74,20 +89,24 @@ function bindTabs() {
   });
 }
 
-function bindCustomFields() {
+function refreshCustomFieldsVisibility() {
   const promptType = document.getElementById('promptApiType');
   const imageType = document.getElementById('imageApiType');
   const customPrompt = document.getElementById('customPromptFields');
   const customImage = document.getElementById('customImageFields');
+  if (!promptType || !imageType || !customPrompt || !customImage) return;
+  customPrompt.classList.toggle('hidden', promptType.value !== 'custom-prompt');
+  customImage.classList.toggle('hidden', imageType.value !== 'custom-image');
+}
 
-  function updateVisibility() {
-    customPrompt.classList.toggle('hidden', promptType.value !== 'custom-prompt');
-    customImage.classList.toggle('hidden', imageType.value !== 'custom-image');
-  }
+function bindCustomFields() {
+  const promptType = document.getElementById('promptApiType');
+  const imageType = document.getElementById('imageApiType');
+  if (!promptType || !imageType) return;
 
-  promptType.addEventListener('change', updateVisibility);
-  imageType.addEventListener('change', updateVisibility);
-  updateVisibility();
+  promptType.addEventListener('change', refreshCustomFieldsVisibility);
+  imageType.addEventListener('change', refreshCustomFieldsVisibility);
+  refreshCustomFieldsVisibility();
 }
 
 // ── Size control ──
@@ -113,7 +132,9 @@ function loadSizeState(s) {
   updateFinalSize();
   updateResolutionDescription();
 }
-  document.getElementById('sizeMode').addEventListener('change', (e) => {
+
+function bindSizeControl() {
+  on('sizeMode', 'change', (e) => {
     sizeMode = e.target.value;
     updateSizePanelVisibility();
     updateFinalSize();
@@ -129,18 +150,18 @@ function loadSizeState(s) {
     });
   });
 
-  document.getElementById('resolutionPreset').addEventListener('change', (e) => {
+  on('resolutionPreset', 'change', (e) => {
     resolutionPreset = migrateResolutionPreset(e.target.value);
     updateFinalSize();
     updateResolutionDescription();
   });
 
-  document.getElementById('customWidth').addEventListener('input', () => {
+  on('customWidth', 'input', () => {
     customWidth = parseInt(document.getElementById('customWidth').value, 10) || 0;
     updateFinalSize();
   });
 
-  document.getElementById('customHeight').addEventListener('input', () => {
+  on('customHeight', 'input', () => {
     customHeight = parseInt(document.getElementById('customHeight').value, 10) || 0;
     updateFinalSize();
   });
@@ -246,17 +267,6 @@ function updateResolutionDescription() {
   el.textContent = preset?.description || '';
 }
 
-function updateResolutionDescription() {
-  const el = document.getElementById('resolutionDescription');
-  if (!el) return;
-  const descriptions = {
-    '1k': '1920 × 1080，适合快速生成和普通预览',
-    '2k': '2560 × 1440，适合更清晰的作品输出',
-    '4k': '3840 × 2160，适合高质量大图输出'
-  };
-  el.textContent = descriptions[resolutionPreset] || '';
-}
-
 function updateSizePanelVisibility() {
   const presetGroup = document.getElementById('sizePresetGroup');
   const customGroup = document.getElementById('sizeCustomGroup');
@@ -266,6 +276,7 @@ function updateSizePanelVisibility() {
 
 function updateFinalSize() {
   const label = document.getElementById('finalSizeLabel');
+  const hint = document.getElementById('sizeCompatibilityHint');
   try {
     const size = getOutputSize({
       sizeMode,
@@ -277,9 +288,22 @@ function updateFinalSize() {
     });
     label.textContent = `最终尺寸：${size.width} × ${size.height}`;
     label.className = 'final-size';
+
+    // Show size compatibility hint when provider may remap the output size
+    if (hint) {
+      const sizeFormat = document.querySelector('[name="imageApi.sizeFormat"]')?.value || 'x';
+      const mappedSize = getProviderSizeForFormat(size, { sizeFormat });
+      const type = document.getElementById('imageApiType')?.value || '';
+      const modelName = document.querySelector('[name="imageApi.model"]')?.value || '';
+      const modelConfig = findImageModelConfig(modelName);
+      // Show hint for OpenAI-mapped format (always remaps) or if mapped size differs for known models
+      const willRemap = sizeFormat === 'openai-mapped' && mappedSize !== size.size;
+      hint.classList.toggle('hidden', !willRemap);
+    }
   } catch (error) {
     label.textContent = `最终尺寸：无效 - ${error.message || '尺寸错误'}`;
     label.className = 'final-size invalid';
+    if (hint) hint.classList.add('hidden');
   }
 }
 
@@ -319,7 +343,7 @@ function getProviderSizeForFormat(outputSize, api = {}) {
 }
 
 function bindActions() {
-  document.getElementById('saveBtn').addEventListener('click', async () => {
+  on('saveBtn', 'click', async () => {
     settings = readForm();
     await saveSettings(settings);
     setLogSettings(settings);
@@ -331,10 +355,10 @@ function bindActions() {
     setTimeout(() => saveStatus.textContent = '', 1800);
   });
 
-  document.getElementById('resetBtn').addEventListener('click', async () => {
+  on('resetBtn', 'click', async () => {
     settings = await resetSettings();
     fillForm(settings);
-    bindCustomFields();
+    refreshCustomFieldsVisibility();
     loadSizeState(settings);
     setLogSettings(settings);
 
@@ -344,7 +368,7 @@ function bindActions() {
     setTimeout(() => saveStatus.textContent = '', 1800);
   });
 
-  document.getElementById('exportBtn').addEventListener('click', () => {
+  on('exportBtn', 'click', () => {
     const safe = JSON.parse(JSON.stringify(readForm()));
     stripKeys(safe);
     const blob = new Blob([JSON.stringify(safe, null, 2)], { type: 'application/json' });
@@ -357,28 +381,28 @@ function bindActions() {
     appendLog({ level: 'info', apiType: 'system', event: 'SETTINGS_EXPORTED', message: '设置已导出' });
   });
 
-  document.getElementById('importBtn').addEventListener('click', () => document.getElementById('importFile').click());
-  document.getElementById('importFile').addEventListener('change', async (event) => {
+  on('importBtn', 'click', () => document.getElementById('importFile').click());
+  on('importFile', 'change', async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
     const text = await file.text();
     const imported = JSON.parse(text);
     settings = deepMerge(DEFAULT_SETTINGS, imported);
     fillForm(settings);
-    bindCustomFields();
+    refreshCustomFieldsVisibility();
     saveStatus.textContent = '已导入，点击保存后生效';
     appendLog({ level: 'info', apiType: 'system', event: 'SETTINGS_IMPORTED', message: '设置文件已导入' });
   });
 
   // History actions
-  document.getElementById('clearHistoryOptionsBtn').addEventListener('click', async () => {
+  on('clearHistoryOptionsBtn', 'click', async () => {
     if (!confirm('确定清空全部历史记录吗？')) return;
     await clearHistory();
     appendLog({ level: 'info', apiType: 'system', event: 'HISTORY_CLEARED', message: '历史记录已清空' });
     saveStatus.textContent = '历史记录已清空';
   });
 
-  document.getElementById('exportHistoryOptionsBtn').addEventListener('click', async () => {
+  on('exportHistoryOptionsBtn', 'click', async () => {
     const payload = await exportHistory();
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -390,8 +414,8 @@ function bindActions() {
     appendLog({ level: 'info', apiType: 'system', event: 'HISTORY_EXPORTED', message: '历史记录已导出' });
   });
 
-  document.getElementById('importHistoryOptionsBtn').addEventListener('click', () => document.getElementById('historyImportFile').click());
-  document.getElementById('historyImportFile').addEventListener('change', async (event) => {
+  on('importHistoryOptionsBtn', 'click', () => document.getElementById('historyImportFile').click());
+  on('historyImportFile', 'change', async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
     const payload = JSON.parse(await file.text());
@@ -403,14 +427,14 @@ function bindActions() {
     appendLog({ level: 'info', apiType: 'system', event: 'HISTORY_IMPORTED', message: '历史记录已导入' });
   });
 
-  document.getElementById('clearDraftOptionsBtn').addEventListener('click', async () => {
+  on('clearDraftOptionsBtn', 'click', async () => {
     await clearDraft();
     saveStatus.textContent = '草稿已清空';
     appendLog({ level: 'info', apiType: 'system', event: 'DRAFT_CLEARED', message: '草稿已清空' });
   });
 
   // Debug log actions
-  document.getElementById('exportDebugLogsBtn').addEventListener('click', async () => {
+  on('exportDebugLogsBtn', 'click', async () => {
     const logs = await getLogs();
     const blob = new Blob([JSON.stringify(logs, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -423,7 +447,7 @@ function bindActions() {
     appendLog({ level: 'info', apiType: 'system', event: 'LOGS_EXPORTED', message: `导出了 ${logs.length} 条日志` });
   });
 
-  document.getElementById('clearDebugLogsBtn').addEventListener('click', async () => {
+  on('clearDebugLogsBtn', 'click', async () => {
     if (!confirm('确定清空全部调试日志吗？')) return;
     await clearLogs();
     saveStatus.textContent = '日志已清空';
@@ -432,7 +456,7 @@ function bindActions() {
 
   // Test Prompt API
   // Test text interface (no image)
-  document.getElementById('testPromptTextBtn').addEventListener('click', async () => {
+  on('testPromptTextBtn', 'click', async () => {
     const current = readForm();
     const api = current?.promptApi || {};
     const resultEl = document.getElementById('testPromptResult');
@@ -463,7 +487,7 @@ function bindActions() {
   });
 
   // Test vision interface (with test image)
-  document.getElementById('testPromptVisionBtn').addEventListener('click', async () => {
+  on('testPromptVisionBtn', 'click', async () => {
     const current = readForm();
     const api = current?.promptApi || {};
     const resultEl = document.getElementById('testPromptResult');
@@ -502,8 +526,8 @@ function bindActions() {
     }
   });
 
-  // Test Image API
-  document.getElementById('testImageBtn').addEventListener('click', async () => {
+  // Test Image API — uses the same payload builder as the real generation flow
+  on('testImageBtn', 'click', async () => {
     const current = readForm();
     const api = current?.imageApi || {};
     const resultEl = document.getElementById('testImageResult');
@@ -527,7 +551,6 @@ function bindActions() {
     });
 
     try {
-      const url = (api.baseUrl || '').replace(/\/+$/, '') + (api.endpoint || '/v1/images/generations');
       const outputSize = getOutputSize({
         sizeMode: api.sizeMode,
         aspectRatio: api.aspectRatio,
@@ -536,39 +559,120 @@ function bindActions() {
         customHeight: api.customHeight,
         referenceImage: null
       });
-      const providerSize = getProviderSizeForFormat(outputSize, api);
-      if ((api.sizeFormat || 'x') === 'openai-mapped' && providerSize !== outputSize.size) {
+
+      const modelConfig = findImageModelConfig(api.model);
+
+      // Determine URL and payload by provider type first. Model names may overlap
+      // between OpenAI-compatible providers and the built-in Grsai routes.
+      let url, body;
+      if (api.type === 'custom-image' && modelConfig?.channel) {
+        // Known model — use v2 unified endpoint with channel-aware payload
+        url = (api.baseUrl || '').replace(/\/+$/, '') + (api.endpoint || modelConfig.submitEndpoint);
+
+        const testPrompt = realTest ? 'a simple test image of a sunset over mountains' : 'test';
+        const { payload } = buildImageApiPayload({
+          model: api.model,
+          prompt: testPrompt,
+          outputSize,
+          channel: modelConfig.channel,
+          images: [],
+          settings: current
+        });
+
+        body = payload;
+
         appendLog({
           level: 'info',
           apiType: 'image',
-          event: 'IMAGE_SIZE_MAPPED',
+          event: 'IMAGE_PAYLOAD_SIZE',
           provider: api.type,
-          message: `Test image size mapped: ${outputSize.size} -> ${providerSize}`,
+          message: `Test image size: ${outputSize.size}`,
           data: {
             requestedSize: outputSize.size,
-            providerSize,
-            reason: 'OpenAI-compatible provider only supports fixed image sizes'
+            width: outputSize.width,
+            height: outputSize.height,
+            channel: modelConfig.channel,
+            provider: api.type
           }
         });
-      }
-      appendLog({
-        level: 'info',
-        apiType: 'image',
-        event: 'IMAGE_PAYLOAD_SIZE',
-        provider: api.type,
-        message: `Test image payload size: ${providerSize}`,
-        data: {
-          requestedSize: outputSize.size,
-          providerSize,
-          width: outputSize.width,
-          height: outputSize.height,
-          sizeFormat: api.sizeFormat || 'x',
-          provider: api.type
+      } else if (api.type === 'custom-image') {
+        // Unknown custom model — use user's requestTemplate/config (same as real generation)
+        const testPrompt = realTest ? 'a simple test image of a sunset over mountains' : 'test';
+        const request = buildCustomImageRequest({
+          api, prompt: testPrompt, outputSize,
+          count: 1, mode: 'standard'
+        });
+
+        url = request.url;
+        body = request.body;
+        // Override method/headers from the built request
+        const fetchMethod = request.method;
+        const fetchHeaders = request.headers;
+
+        const ps = request.providerSize;
+        const sf = request.sizeFormat || 'x';
+        appendLog({
+          level: 'info',
+          apiType: 'image',
+          event: 'IMAGE_PAYLOAD_SIZE',
+          provider: api.type,
+          message: `Test custom image size: ${outputSize.size}`,
+          data: { requestedSize: outputSize.size, providerSize: ps, width: outputSize.width, height: outputSize.height, sizeFormat: sf, provider: api.type }
+        });
+
+        // Send with built method/headers (body is already a template-replaced string from customApi)
+        const response = await fetch(url, {
+          method: fetchMethod,
+          headers: fetchHeaders,
+          body: fetchMethod === 'GET' ? undefined : body
+        });
+
+        if (response.ok) {
+          resultEl.textContent = `✓ 连接成功 (HTTP ${response.status})${realTest ? '' : ' — 仅做连通性验证'}`;
+          resultEl.className = 'test-result success';
+        } else if (response.status === 401 || response.status === 403) {
+          resultEl.textContent = `✗ API Key 无效 (HTTP ${response.status})`;
+          resultEl.className = 'test-result error';
+        } else if (response.status === 429) {
+          resultEl.textContent = `⚠ 频率限制 (HTTP ${response.status})`;
+          resultEl.className = 'test-result warn';
+        } else {
+          resultEl.textContent = `⚠ HTTP ${response.status}`;
+          resultEl.className = 'test-result warn';
         }
-      });
-      const body = realTest
-        ? { model: api.model, prompt: 'a simple test image', n: 1, size: providerSize }
-        : { model: api.model, prompt: 'test', n: 1, size: providerSize };
+        return; // early return — already handled fetch + response
+      } else {
+        // Fallback: use old OpenAI-compatible format for openai-compatible-image type
+        url = (api.baseUrl || '').replace(/\/+$/, '') + (api.endpoint || '/v1/images/generations');
+        const providerSize = getProviderSizeForFormat(outputSize, api);
+
+        if ((api.sizeFormat || 'x') === 'openai-mapped' && providerSize !== outputSize.size) {
+          appendLog({
+            level: 'info',
+            apiType: 'image',
+            event: 'IMAGE_SIZE_MAPPED',
+            provider: api.type,
+            message: `Test image size mapped: ${outputSize.size} -> ${providerSize}`,
+            data: { requestedSize: outputSize.size, providerSize, reason: 'OpenAI-compatible provider only supports fixed image sizes' }
+          });
+        }
+
+        appendLog({
+          level: 'info',
+          apiType: 'image',
+          event: 'IMAGE_PAYLOAD_SIZE',
+          provider: api.type,
+          message: `Test image payload size: ${providerSize}`,
+          data: { requestedSize: outputSize.size, providerSize, width: outputSize.width, height: outputSize.height, sizeFormat: api.sizeFormat || 'x', provider: api.type }
+        });
+
+        body = {
+          model: api.model,
+          prompt: realTest ? 'a simple test image of a sunset over mountains' : 'test',
+          n: 1,
+          size: providerSize
+        };
+      }
 
       const response = await fetch(url, {
         method: 'POST',

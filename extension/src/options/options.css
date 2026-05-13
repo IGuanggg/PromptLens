@@ -14,6 +14,8 @@ p { margin: 0; color: var(--muted); }
 h2 { margin: 0 0 18px; }
 h3 { margin: 24px 0 12px; color: var(--primary); font-size: 15px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.endpoint-block { display: flex; flex-direction: column; gap: 6px; }
+.endpoint-label { font-size: 13px; color: var(--muted); }
 label { display: grid; gap: 7px; color: var(--muted); font-size: 13px; margin-bottom: 14px; }
 input, select, textarea { width: 100%; border: 1px solid var(--border); background: rgba(0,0,0,.18); color: var(--text); border-radius: 12px; padding: 11px; outline: none; }
 textarea { min-height: 90px; resize: vertical; }

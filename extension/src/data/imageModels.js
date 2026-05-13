@@ -86,6 +86,13 @@ export function getImageModelConfig(modelName) {
   return IMAGE_MODELS.find(m => m.id === modelName || m.name === modelName) || IMAGE_MODELS[1];
 }
 
+/** Strict lookup — returns null for unknown models (no fallback to gpt-image-2).
+ *  Use this in routing decisions to avoid misrouting custom models into the Draw API. */
+export function findImageModelConfig(modelName) {
+  const m = IMAGE_MODELS.find(m => m.id === modelName || m.name === modelName);
+  return m || null;
+}
+
 export function getSubmitEndpointForModel(modelName) {
   const m = getImageModelConfig(modelName);
   return m?.submitEndpoint || '/v1/api/generate';
@@ -158,6 +165,47 @@ export function resolveAspectRatioForNano({ settings, currentImage, outputSize }
   const selected = api.aspectRatio;
   if (selected && selected !== '' && selected !== 'custom') return selected;
   return 'auto';
+}
+
+/** Build a v2 API payload (shared by callDrawApi and test Image API).
+ *  @returns {{ payload: object, imageSize: string|null, safeRes: string }}
+ */
+export function buildImageApiPayload({ model, prompt, outputSize, channel, images = [], settings }) {
+  const api = settings?.imageApi || {};
+  const resolutionPreset = outputSize?.resolutionPreset || api?.resolutionPreset || '1k';
+  const refWidth = outputSize?.width || 1080;
+  const refHeight = outputSize?.height || 1080;
+
+  if (channel === 'nano-banana') {
+    const imageSizeLabel = toApiImageSize(resolutionPreset);
+    const resolvedAspectRatio = resolveAspectRatioForNano({ settings: settings || {}, currentImage: null, outputSize });
+    const finalAspectRatio = resolvedAspectRatio || outputSize?.aspectRatio || api.aspectRatio || 'auto';
+
+    const safeRes = getSafeResolutionForModel(model, resolutionPreset);
+    const finalImageSize = toApiImageSize(safeRes);
+
+    const payload = {
+      model, prompt,
+      images,
+      aspectRatio: finalAspectRatio,
+      imageSize: finalImageSize,
+      replyType: 'json'
+    };
+    return { payload, imageSize: finalImageSize, safeRes };
+  }
+
+  // Image channel (gpt-image-2): aspectRatio uses dimensions format (e.g. "1920x1080")
+  const aspectDims = outputSize?.sizeMode === 'custom'
+    ? `${refWidth}x${refHeight}`
+    : (outputSize?.size || `${refWidth}x${refHeight}`);
+
+  const payload = {
+    model, prompt,
+    images,
+    aspectRatio: aspectDims,
+    replyType: 'json'
+  };
+  return { payload, imageSize: null, safeRes: resolutionPreset };
 }
 
 // ── Size conversion ──

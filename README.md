@@ -159,6 +159,23 @@ PromptLens/
 ```
 
 ## 更新日志
+### v0.4.1 — 设置页稳定性 & Image API 测试修复 (2026-05)
+
+**设置页稳定性：**
+- 修复 Options 页面尺寸控件初始化结构，避免脚本中断导致标签页、保存设置、测试按钮无法点击。
+- 设置页表单先恢复用户配置，再绑定自定义字段和尺寸控件，确保新环境与已有配置都能正常显示。
+- 调整 Endpoint 配置区结构，避免嵌套 label 影响表单交互。
+
+**Image API 测试修复：**
+- 测试 Image API 时按 provider 类型优先路由：Grsai 内置模型走 v2 payload，OpenAI-compatible 始终走 OpenAI-compatible payload，自定义模型走 requestTemplate。
+- 新增共享的 Grsai v2 payload 构造逻辑，减少测试请求与正式生成请求不一致的问题。
+- 自定义 Image API 测试支持 `{{width}}`、`{{height}}`、`{{size}}`、`{{dashscopeSize}}`、`{{aspectRatio}}`、`{{resolutionPreset}}`、`{{sizeMode}}` 等模板变量。
+- 修复 Custom Image API 使用 `query-key` 认证时 URL 未追加 API Key 的问题。
+
+**尺寸与日志：**
+- 输出尺寸提示支持 OpenAI mapped 兼容尺寸提示。
+- 保留 `IMAGE_PAYLOAD_SIZE` / `IMAGE_SIZE_MAPPED` 日志，便于确认 requestedSize 与 providerSize。
+
 ### v0.4.0 — API v2 升级 & 存储修复 & 超时优化 (2026-05)
 
 **Grsai API v2 升级：**
