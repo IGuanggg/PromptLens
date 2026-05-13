@@ -161,6 +161,21 @@ PromptLens/
 ```
 
 ## 更新日志
+### v0.4.2 — 发布验证脚本 & 请求构造解耦 (2026-05)
+
+**发布前验证：**
+- 新增 `scripts/verify.mjs`，一键检查 JS 语法、manifest、尺寸矩阵、Provider payload、认证方式、DOM id 和 HTML 损坏标记。
+- README 增加发布前检查说明：运行 `node scripts/verify.mjs`，任一检查失败不要发布。
+
+**请求构造解耦：**
+- 新增 `imageRequestBuilder.js`，将 Custom Image API 请求构造从 `imageService.js` 抽离。
+- Options 测试按钮与正式 custom image 生成复用同一套 request builder，降低测试路径和正式路径不一致的风险。
+- 保持默认 Grsai、OpenAI-compatible、自定义 requestTemplate 三类 Image API 路由规则不变。
+
+**架构审查：**
+- 新增 `ARCHITECTURE_REVIEW.md`，记录模块分层、生成数据流、Provider 路由、旧 storage key 保留原因和后续拆分建议。
+- 清理调试 console 中残留的 `[PromptPilot]` 前缀为 `[PromptLens]`，storage key 保持不变以兼容旧用户数据。
+
 ### v0.4.1 — 设置页稳定性 & Image API 测试修复 (2026-05)
 
 **设置页稳定性：**
