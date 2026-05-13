@@ -4,7 +4,7 @@ import { clearHistory, createHistoryExportFilename, exportHistory, importHistory
 import { getLogs, clearLogs, getLastCall, initLogService, setLogSettings, setLogLimit } from '../services/logService.js';
 import { appendLog, updateLastCall } from '../services/logService.js';
 import { testPromptTextApi, testPromptVisionApi } from '../services/promptService.js';
-import { RATIO_OPTIONS, getOutputSize, mapSizeForOpenAIImages, migrateResolutionPreset, migrateSizeMode } from '../utils/size.js';
+import { RATIO_OPTIONS, RESOLUTION_PRESETS, getOutputSize, mapSizeForOpenAIImages, migrateResolutionPreset, migrateSizeMode } from '../utils/size.js';
 import { getSubmitEndpointForModel, getResultEndpointForModel, getImageModelConfig } from '../data/imageModels.js';
 
 const form = document.getElementById('settingsForm');
@@ -236,7 +236,14 @@ function updateResolutionOptionsByModel(modelName) {
     select.value = resolutionPreset;
   }
   updateFinalSize();
-  updateResolutionDescription?.();
+  updateResolutionDescription();
+}
+
+function updateResolutionDescription() {
+  const el = document.getElementById('resolutionDescription');
+  if (!el) return;
+  const preset = RESOLUTION_PRESETS[migrateResolutionPreset(resolutionPreset)] || RESOLUTION_PRESETS['1k'];
+  el.textContent = preset?.description || '';
 }
 
 function updateResolutionDescription() {
