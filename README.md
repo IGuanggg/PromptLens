@@ -137,6 +137,8 @@ PromptLens 是一个 Chrome / Edge Manifest V3 浏览器插件，用于把网页
 - Authorization header 会被隐藏
 - Base64 图片数据会被截断
 
+**发布前检查**：运行 `node scripts/verify.mjs`，覆盖语法、manifest、尺寸矩阵、payload、认证、DOM id。任一失败不要发布。
+
 ## 目录结构
 
 ```text

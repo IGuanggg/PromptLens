@@ -179,13 +179,13 @@ function bindImageInputEvents() {
   });
 
   $('pasteBtn').addEventListener('click', async () => {
-    console.log('[PromptPilot][CLICK] pasteBtn');
+    console.log('[PromptLens][CLICK] pasteBtn');
     try {
       const items = await navigator.clipboard.read();
-      console.log('[PromptPilot] async clipboard read OK, items:', items.length);
+      console.log('[PromptLens] async clipboard read OK, items:', items.length);
       for (const item of items) {
         for (const type of item.types) {
-          console.log('[PromptPilot] clipboard item type:', type);
+          console.log('[PromptLens] clipboard item type:', type);
           if (ALLOWED_IMAGE_TYPES.has(type)) {
             const blob = await item.getType(type);
             const file = new File([blob], 'clipboard.png', { type });
@@ -193,31 +193,31 @@ function bindImageInputEvents() {
             setCurrentImage(image);
             setTaskStatus('idle', '图片已从剪贴板导入，请点击反推');
             renderTaskStatus();
-            console.log('[PromptPilot] paste via async clipboard OK');
+            console.log('[PromptLens] paste via async clipboard OK');
             return;
           }
         }
       }
       toast('剪贴板中没有图片');
     } catch (error) {
-      console.warn('[PromptPilot] async clipboard.read failed:', error?.name, error?.message);
+      console.warn('[PromptLens] async clipboard.read failed:', error?.name, error?.message);
       toast('请点击插件面板后按 Ctrl+V 粘贴图片');
     }
   });
 
   document.addEventListener('paste', async (event) => {
-    console.log('[PromptPilot][PASTE_EVENT]', { hasClip: !!event.clipboardData, files: event.clipboardData?.files?.length || 0, items: event.clipboardData?.items?.length || 0 });
+    console.log('[PromptLens][PASTE_EVENT]', { hasClip: !!event.clipboardData, files: event.clipboardData?.files?.length || 0, items: event.clipboardData?.items?.length || 0 });
     const target = event.target;
-    if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') { console.log('[PromptPilot] paste ignored — target is input/textarea'); return; }
+    if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT') { console.log('[PromptLens] paste ignored — target is input/textarea'); return; }
     try {
       const image = await handlePasteEvent(event);
-      console.log('[PromptPilot] paste event image found, setting currentImage');
+      console.log('[PromptLens] paste event image found, setting currentImage');
       setCurrentImage(image);
       setTaskStatus('idle', '图片已从粘贴导入，请点击反推');
       renderTaskStatus();
     } catch (error) {
-      if (error.message?.includes('剪贴板中没有图片')) { console.log('[PromptPilot] paste event — no image in clipboard'); return; }
-      console.error('[PromptPilot] paste event error:', error);
+      if (error.message?.includes('剪贴板中没有图片')) { console.log('[PromptLens] paste event — no image in clipboard'); return; }
+      console.error('[PromptLens] paste event error:', error);
       toast(error.message || '粘贴图片失败');
     }
   });
@@ -994,7 +994,7 @@ async function loadHistoryThumbFromBlob(item, row) {
     item.results?.[0]?.blobId
   ].filter(Boolean);
 
-  console.log('[PromptPilot][HISTORY_THUMB_DEBUG]', { id: item.id, candidateBlobIds: blobIds });
+  console.log('[PromptLens][HISTORY_THUMB_DEBUG]', { id: item.id, candidateBlobIds: blobIds });
 
   for (const blobId of blobIds) {
     try {
@@ -1002,10 +1002,10 @@ async function loadHistoryThumbFromBlob(item, row) {
       if (url) {
         const img = row.querySelector('.history-thumb');
         if (img) { img.src = url; img.dataset.blobSource = blobId; }
-        console.log('[PromptPilot][HISTORY_THUMB_LOADED]', { id: item.id, blobId });
+        console.log('[PromptLens][HISTORY_THUMB_LOADED]', { id: item.id, blobId });
         return;
       }
-    } catch (e) { console.warn('[PromptPilot][HISTORY_BLOB_MISSING]', { id: item.id, blobId, error: e?.message }); }
+    } catch (e) { console.warn('[PromptLens][HISTORY_BLOB_MISSING]', { id: item.id, blobId, error: e?.message }); }
   }
 
   // Fallback: remote URLs
@@ -1013,11 +1013,11 @@ async function loadHistoryThumbFromBlob(item, row) {
   if (fallbackUrl && !String(fallbackUrl).startsWith('data:')) {
     const img = row.querySelector('.history-thumb');
     if (img) { img.src = fallbackUrl; img.dataset.blobSource = 'remote-fallback'; }
-    console.log('[PromptPilot][HISTORY_IMAGE_FALLBACK_USED]', { id: item.id, fallbackUrl: fallbackUrl.slice(0, 80) });
+    console.log('[PromptLens][HISTORY_IMAGE_FALLBACK_USED]', { id: item.id, fallbackUrl: fallbackUrl.slice(0, 80) });
     return;
   }
 
-  console.warn('[PromptPilot][HISTORY_THUMB_ALL_FAILED]', { id: item.id });
+  console.warn('[PromptLens][HISTORY_THUMB_ALL_FAILED]', { id: item.id });
 }
 
 function restoreHistoryItem(item) {

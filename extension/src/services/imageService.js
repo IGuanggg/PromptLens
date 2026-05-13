@@ -1,5 +1,5 @@
 ﻿import { IMAGE_API_TYPES } from '../constants.js';
-import { buildHeaders, buildUrl, fetchJsonWithTimeout, mapResponse, parseTemplateBody, replaceTemplate, getByPath } from '../utils/customApi.js';
+import { buildHeaders, buildUrl, fetchJsonWithTimeout, replaceTemplate, getByPath } from '../utils/customApi.js';
 import { ERROR_CODES, createAppError } from '../utils/errors.js';
 import { normalizeImageResult, normalizeOpenAIImageResult } from '../utils/imageResult.js';
 import { mockImages } from '../utils/mockImages.js';
@@ -8,6 +8,7 @@ import { createMultiAnglePrompts } from './anglePromptService.js';
 import { appendLog } from './logService.js';
 import { findImageModelConfig, getImageModelConfig, buildImageApiPayload, validateNanoBananaPayload, sanitizePromptForImageGeneration } from '../data/imageModels.js';
 import { extractTaskId, pollImageResult, normalizeImageTaskFailure } from './imageTaskService.js';
+import { buildCustomImageRequest } from './imageRequestBuilder.js';
 
 export async function generateImages({
   prompt,
@@ -536,49 +537,41 @@ async function callCustomImage({ api, prompt, negativePrompt, referenceImage, mo
     return mockImages('custom-image-mock', count || 4, width, height);
   }
 
-  const requestedSize = size || outputSize?.size || `${width}x${height}`;
-  const finalDashscopeSize = dashscopeSize || outputSize?.dashscopeSize || `${width}*${height}`;
-  const sizeFormat = api.sizeFormat || 'x';
-  const providerSize = getProviderSize({ requestedSize, dashscopeSize: finalDashscopeSize, sizeFormat });
+  const request = buildCustomImageRequest({
+    api,
+    prompt,
+    negativePrompt,
+    referenceImage,
+    outputSize: outputSize || {
+      width,
+      height,
+      size: size || `${width}x${height}`,
+      dashscopeSize: dashscopeSize || `${width}*${height}`,
+      aspectRatio: api.aspectRatio || '',
+      resolutionPreset: api.resolutionPreset || '',
+      sizeMode: api.sizeMode || ''
+    },
+    count,
+    mode
+  });
   appendLog({
     level: 'info',
     apiType: 'image',
     event: 'IMAGE_PAYLOAD_SIZE',
     provider: 'custom-image',
-    message: `Custom image payload size: ${providerSize}`,
-    data: { ...trace, requestedSize, providerSize, width, height, sizeFormat, provider: 'custom-image' }
+    message: `Custom image payload size: ${request.providerSize}`,
+    data: { ...trace, requestedSize: request.variables.size, providerSize: request.providerSize, width, height, sizeFormat: request.sizeFormat, provider: 'custom-image' }
   });
-  const variables = {
-    ...custom,
-    model: api.model || '',
-    prompt,
-    negativePrompt,
-    referenceImage,
-    width,
-    height,
-    size: requestedSize,
-    dashscopeSize: finalDashscopeSize,
-    providerSize,
-    aspectRatio: outputSize?.aspectRatio || api.aspectRatio || '',
-    resolutionPreset: outputSize?.resolutionPreset || api.resolutionPreset || '',
-    sizeMode: outputSize?.sizeMode || api.sizeMode || '',
-    count,
-    mode
-  };
 
-  const urlSettings = { ...variables, apiKey: api.apiKey || '' };
-  const generateUrl = buildUrl(api.baseUrl, api.endpoint, urlSettings);
-  const method = custom.method || 'POST';
-
-  const raw = await fetchJsonWithTimeout(generateUrl, {
-    method,
-    headers: buildHeaders({ ...custom, apiKey: api.apiKey }),
-    body: method.toUpperCase() === 'GET' ? undefined : parseTemplateBody(custom.requestTemplate || '', variables)
+  const raw = await fetchJsonWithTimeout(request.url, {
+    method: request.method,
+    headers: request.headers,
+    body: request.body
   }, 300000, { apiType: 'image', provider: 'custom-image' });
 
   // Handle async polling
   const finalRaw = custom.requestMode === 'async'
-    ? await pollCustomImage(raw, api, custom, variables)
+    ? await pollCustomImage(raw, api, custom, request.variables)
     : raw;
 
   return normalizeImageResult(finalRaw, 'custom-image', {
@@ -587,45 +580,6 @@ async function callCustomImage({ api, prompt, negativePrompt, referenceImage, mo
     responseMap: custom.responseMap || {},
     requireImages: true
   });
-}
-
-/** Build a custom image API request (URL + headers + body) that matches
- *  the legacy custom API flow. Used by both generateImages and the Options test button. */
-export function buildCustomImageRequest({ api, prompt, outputSize, count = 1, mode = 'standard', negativePrompt = '', referenceImage = '' }) {
-  const custom = api.custom || {};
-  const width = outputSize?.width || 1080;
-  const height = outputSize?.height || 1080;
-  const size = outputSize?.size || `${width}x${height}`;
-  const dashscopeSize = outputSize?.dashscopeSize || `${width}*${height}`;
-  const sizeFormat = api.sizeFormat || 'x';
-  const providerSize = getProviderSize({ requestedSize: size, dashscopeSize, sizeFormat });
-
-  const variables = {
-    ...custom,
-    model: api.model || '',
-    prompt,
-    negativePrompt,
-    referenceImage,
-    width,
-    height,
-    size,
-    dashscopeSize,
-    providerSize,
-    aspectRatio: outputSize?.aspectRatio || api.aspectRatio || '',
-    resolutionPreset: outputSize?.resolutionPreset || api.resolutionPreset || '',
-    sizeMode: outputSize?.sizeMode || api.sizeMode || '',
-    count,
-    mode
-  };
-
-  const urlSettings = { ...variables, apiKey: api.apiKey || '' };
-  const generateUrl = buildUrl(api.baseUrl, api.endpoint, urlSettings);
-  const method = (custom.method || 'POST').toUpperCase();
-
-  const headers = buildHeaders({ ...custom, apiKey: api.apiKey });
-  const body = method === 'GET' ? undefined : parseTemplateBody(custom.requestTemplate || '', variables);
-
-  return { url: generateUrl, method, headers, body, variables, providerSize, sizeFormat };
 }
 
 async function pollCustomImage(initialRaw, api, custom, variables) {

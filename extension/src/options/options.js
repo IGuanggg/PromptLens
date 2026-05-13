@@ -4,7 +4,7 @@ import { clearHistory, createHistoryExportFilename, exportHistory, importHistory
 import { getLogs, clearLogs, getLastCall, initLogService, setLogSettings, setLogLimit } from '../services/logService.js';
 import { appendLog, updateLastCall } from '../services/logService.js';
 import { testPromptTextApi, testPromptVisionApi } from '../services/promptService.js';
-import { buildCustomImageRequest } from '../services/imageService.js';
+import { buildCustomImageRequest } from '../services/imageRequestBuilder.js';
 import { RATIO_OPTIONS, RESOLUTION_PRESETS, getOutputSize, mapSizeForOpenAIImages, migrateResolutionPreset, migrateSizeMode } from '../utils/size.js';
 import { getSubmitEndpointForModel, getResultEndpointForModel, getImageModelConfig, findImageModelConfig, buildImageApiPayload } from '../data/imageModels.js';
 
