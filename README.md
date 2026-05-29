@@ -238,7 +238,7 @@ PromptLens/
 - 历史记录缩略图 5 级加载链：缩略图 blob → 源图 blob → 结果 blob → 远程 URL 回退 → "图片缓存丢失"占位符
 
 **粘贴修复：**
-- 粘贴按钮和 Ctrl+V 均增加诊断日志（`[PromptPilot][CLICK] pasteBtn`、`[PromptPilot][PASTE_EVENT]`）
+- 粘贴按钮和 Ctrl+V 均增加诊断日志（`[PromptLens][CLICK] pasteBtn`、`[PromptLens][PASTE_EVENT]`）
 - 异步剪贴板 API 失败时自动提示使用 Ctrl+V
 
 ### v0.2.0 — 双通道生图 & 模型能力系统 (2026-05)
