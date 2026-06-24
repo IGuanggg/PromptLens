@@ -5,8 +5,9 @@ import { getLogs, clearLogs, getLastCall, initLogService, setLogSettings, setLog
 import { appendLog, updateLastCall } from '../services/logService.js';
 import { testPromptTextApi, testPromptVisionApi } from '../services/promptService.js';
 import { buildCustomImageRequest } from '../services/imageRequestBuilder.js';
+import { discoverModels } from '../services/modelDiscoveryService.js';
 import { RATIO_OPTIONS, RESOLUTION_PRESETS, getOutputSize, mapSizeForOpenAIImages, migrateResolutionPreset, migrateSizeMode } from '../utils/size.js';
-import { getSubmitEndpointForModel, getResultEndpointForModel, getImageModelConfig, findImageModelConfig, buildImageApiPayload } from '../data/imageModels.js';
+import { findImageModelConfig, buildImageApiPayload, getImageModels } from '../data/imageModels.js';
 
 const form = document.getElementById('settingsForm');
 const saveStatus = document.getElementById('saveStatus');
@@ -19,6 +20,8 @@ let resolutionPreset = '1k';
 let customWidth = 1080;
 let customHeight = 1080;
 let refImage = null;
+let discoveredPromptModels = [];
+let discoveredImageModels = [];
 
 /** Safe getElementById + addEventListener with null-guard */
 function on(id, event, handler) {
@@ -65,6 +68,7 @@ async function init() {
   fillForm(settings);
 
   try { bindActions(); } catch (e) { console.error('[Options] bindActions failed', e); }
+  try { bindModelDiscovery(); } catch (e) { console.error('[Options] bindModelDiscovery failed', e); }
   try { bindCustomFields(); } catch (e) { console.error('[Options] bindCustomFields failed', e); }
   try { bindSizeControl(); } catch (e) { console.error('[Options] bindSizeControl failed', e); }
   try { loadSizeState(settings); } catch (e) { console.error('[Options] loadSizeState failed', e); }
@@ -105,8 +109,173 @@ function bindCustomFields() {
   if (!promptType || !imageType) return;
 
   promptType.addEventListener('change', refreshCustomFieldsVisibility);
-  imageType.addEventListener('change', refreshCustomFieldsVisibility);
+  imageType.addEventListener('change', () => {
+    refreshCustomFieldsVisibility();
+    updateEndpointFromModel();
+    updateFinalSize();
+  });
   refreshCustomFieldsVisibility();
+}
+
+function bindModelDiscovery() {
+  const promptInput = document.getElementById('promptModelInput');
+  const promptSelect = document.getElementById('promptModelSelect');
+  const imageInput = document.getElementById('imageModelInput');
+  const imageSelect = document.getElementById('imageModelSelect');
+
+  seedModelChoices('prompt', [promptInput?.value || settings?.promptApi?.model || 'gpt-4.1-mini']);
+  seedModelChoices('image', [
+    ...getImageModels().map((model) => model.id),
+    imageInput?.value || settings?.imageApi?.model || 'gpt-image-2'
+  ]);
+
+  if (promptSelect && promptInput) {
+    promptSelect.addEventListener('change', () => {
+      if (!promptSelect.value) return;
+      promptInput.value = promptSelect.value;
+    });
+  }
+
+  if (imageSelect && imageInput) {
+    imageSelect.addEventListener('change', () => {
+      if (!imageSelect.value) return;
+      imageInput.value = imageSelect.value;
+      onModelChange();
+    });
+  }
+
+  if (imageInput) {
+    imageInput.addEventListener('input', () => {
+      syncModelPickerSelection('image');
+    });
+  }
+
+  if (promptInput) {
+    promptInput.addEventListener('input', () => {
+      syncModelPickerSelection('prompt');
+    });
+  }
+
+  on('discoverPromptModelsBtn', 'click', () => handleDiscoverModels('prompt'));
+  on('discoverImageModelsBtn', 'click', () => handleDiscoverModels('image'));
+}
+
+function seedModelChoices(kind, models) {
+  const clean = [...new Set((models || []).map((model) => String(model || '').trim()).filter(Boolean))];
+  if (kind === 'prompt') {
+    discoveredPromptModels = clean;
+  } else {
+    discoveredImageModels = clean;
+  }
+  renderModelChoices(kind);
+}
+
+function renderModelChoices(kind) {
+  const inputId = kind === 'prompt' ? 'promptModelInput' : 'imageModelInput';
+  const listId = kind === 'prompt' ? 'promptModelList' : 'imageModelList';
+  const selectId = kind === 'prompt' ? 'promptModelSelect' : 'imageModelSelect';
+  const models = kind === 'prompt' ? discoveredPromptModels : discoveredImageModels;
+  const input = document.getElementById(inputId);
+  const datalist = document.getElementById(listId);
+  const select = document.getElementById(selectId);
+  if (!datalist || !select) return;
+
+  const placeholder = kind === 'prompt' ? '选择已获取模型' : '选择模型';
+  datalist.innerHTML = models.map((model) => `<option value="${escapeAttr(model)}"></option>`).join('');
+  select.innerHTML = [
+    `<option value="">${placeholder}</option>`,
+    ...models.map((model) => `<option value="${escapeAttr(model)}">${escapeHtml(model)}</option>`)
+  ].join('');
+
+  if (input?.value && models.includes(input.value)) {
+    select.value = input.value;
+  }
+}
+
+function syncModelPickerSelection(kind) {
+  const inputId = kind === 'prompt' ? 'promptModelInput' : 'imageModelInput';
+  const selectId = kind === 'prompt' ? 'promptModelSelect' : 'imageModelSelect';
+  const input = document.getElementById(inputId);
+  const select = document.getElementById(selectId);
+  if (!input || !select) return;
+  select.value = [...select.options].some((option) => option.value === input.value) ? input.value : '';
+}
+
+async function handleDiscoverModels(kind) {
+  const current = readForm();
+  const api = kind === 'prompt' ? current.promptApi : current.imageApi;
+  const button = document.getElementById(kind === 'prompt' ? 'discoverPromptModelsBtn' : 'discoverImageModelsBtn');
+  const resultEl = document.getElementById(kind === 'prompt' ? 'promptModelDiscoverResult' : 'imageModelDiscoverResult');
+  const input = document.getElementById(kind === 'prompt' ? 'promptModelInput' : 'imageModelInput');
+
+  if (!api?.baseUrl) {
+    setModelDiscoveryStatus(resultEl, '请先填写 Base URL', 'error');
+    return;
+  }
+
+  button.disabled = true;
+  setModelDiscoveryStatus(resultEl, '正在获取模型列表...', '');
+
+  try {
+    const result = await discoverModels({
+      baseUrl: api.baseUrl,
+      apiKey: api.apiKey,
+      apiType: kind,
+      provider: api.type || (kind === 'prompt' ? 'prompt-api' : 'image-api'),
+      custom: api.custom || {},
+      forceBearer: api.type !== 'custom-prompt' && api.type !== 'custom-image'
+    });
+
+    const merged = [
+      ...(kind === 'prompt' ? discoveredPromptModels : discoveredImageModels),
+      ...result.models
+    ];
+    seedModelChoices(kind, merged);
+    syncModelPickerSelection(kind);
+    setModelDiscoveryStatus(resultEl, `已获取 ${result.models.length} 个模型，可从下拉选择，也可继续手填`, 'success');
+
+    appendLog({
+      level: 'info',
+      apiType: kind,
+      event: 'MODEL_DISCOVERY_SUCCESS',
+      provider: api.type || '',
+      endpoint: result.url,
+      method: 'GET',
+      message: `发现 ${result.models.length} 个模型`,
+      data: { count: result.models.length, selectedModel: input?.value || '' }
+    });
+  } catch (error) {
+    setModelDiscoveryStatus(resultEl, `${error.message || '获取模型失败'}，可继续手动填写`, 'error');
+    appendLog({
+      level: 'warn',
+      apiType: kind,
+      event: 'MODEL_DISCOVERY_FAILED',
+      provider: api?.type || '',
+      message: error.message || '获取模型失败'
+    });
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function setModelDiscoveryStatus(el, text, cls) {
+  if (!el) return;
+  el.textContent = text || '';
+  el.className = `field-description model-discovery-status${cls ? ` ${cls}` : ''}`;
+}
+
+function escapeHtml(value) {
+  return String(value || '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[char]);
+}
+
+function escapeAttr(value) {
+  return escapeHtml(value);
 }
 
 // ── Size control ──
@@ -192,27 +361,44 @@ function onModelChange() {
 function updateEndpointFromModel() {
   const modelSelect = document.querySelector('[name="imageApi.model"]');
   const modelName = modelSelect?.value || 'gpt-image-2';
-  const submitEp = getSubmitEndpointForModel(modelName);
-  const resultEp = getResultEndpointForModel(modelName);
+  const apiType = document.getElementById('imageApiType')?.value || settings?.imageApi?.type || '';
+  const modelConfig = findImageModelConfig(modelName);
+  const isKnownDrawModel = apiType === 'custom-image' && modelConfig?.channel;
+  const submitEp = isKnownDrawModel
+    ? modelConfig.submitEndpoint
+    : (apiType === 'openai-compatible-image' ? '/v1/images/generations' : '');
+  const resultEp = isKnownDrawModel ? modelConfig.resultEndpoint : '';
   const input = document.getElementById('imageEndpointInput');
   const preview = document.getElementById('endpointPreview');
   const overrideCb = document.getElementById('customEndpointOverrideCb');
   const isOverride = overrideCb?.checked || false;
 
   if (input) {
-    if (!isOverride) input.value = submitEp;
-    input.readOnly = !isOverride;
+    if (!isOverride && submitEp) input.value = submitEp;
+    if (!isOverride && !submitEp && apiType === 'custom-image') input.value = '';
+    input.readOnly = !isOverride && Boolean(submitEp);
   }
   if (preview) {
-    preview.textContent = `提交：${submitEp} | 结果：${resultEp}`;
+    if (isKnownDrawModel) {
+      preview.textContent = `提交：${submitEp} | 结果：${resultEp}`;
+    } else if (apiType === 'openai-compatible-image') {
+      preview.textContent = `提交：${submitEp}；如接口不同，可勾选手动覆盖 Endpoint`;
+    } else {
+      preview.textContent = '自定义模型未内置路由，请填写 Endpoint 或 Request Template';
+    }
   }
 }
 
 function renderImageModelCapability(modelName) {
   const el = document.getElementById('imageModelCapability');
   if (!el) return;
-  const model = getImageModelConfig(modelName);
-  if (!model) { el.innerHTML = ''; return; }
+  const model = findImageModelConfig(modelName);
+  if (!model) {
+    el.innerHTML = `
+      <div class="cap-title">自定义模型：${escapeHtml(modelName || '未填写')}</div>
+      <div class="cap-desc">未匹配到内置模型能力，将按当前接口类型和 Endpoint 发送。尺寸能力以接口实际支持为准。</div>`;
+    return;
+  }
 
   const badges = (model.badges || []).map(b => {
     const warn = b === '快速' || (b === '1K' && model.maxResolution === '1K');
@@ -236,8 +422,8 @@ function renderImageModelCapability(modelName) {
 function updateResolutionOptionsByModel(modelName) {
   const select = document.getElementById('resolutionPreset');
   if (!select) return;
-  const model = getImageModelConfig(modelName);
-  const supported = model?.supportsResolutions || ['1k'];
+  const model = findImageModelConfig(modelName);
+  const supported = model?.supportsResolutions || ['1k', '2k', '4k'];
   const current = resolutionPreset;
 
   const allOptions = [

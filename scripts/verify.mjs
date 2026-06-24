@@ -6,6 +6,7 @@ import { execFileSync } from 'node:child_process';
 import { DEFAULT_SETTINGS } from '../extension/src/services/storageService.js';
 import { buildImageApiPayload, findImageModelConfig } from '../extension/src/data/imageModels.js';
 import { buildCustomImageRequest } from '../extension/src/services/imageRequestBuilder.js';
+import { buildModelDiscoveryRequest, buildModelsUrl, parseModelList } from '../extension/src/services/modelDiscoveryService.js';
 import { getOutputSize, mapSizeForOpenAIImages } from '../extension/src/utils/size.js';
 
 const root = process.cwd();
@@ -175,6 +176,65 @@ test('image test provider routing rules', () => {
   };
   assert.equal(findImageModelConfig(customApi.model), null);
   assert.equal(buildCustomImageRequest({ api: customApi, prompt: 'test', outputSize }).body, '{"size":"1080x1080"}');
+});
+
+test('model discovery url and response parsing', () => {
+  assert.equal(buildModelsUrl('https://api.openai.com'), 'https://api.openai.com/v1/models');
+  assert.equal(buildModelsUrl('https://api.openai.com/v1'), 'https://api.openai.com/v1/models');
+  assert.equal(buildModelsUrl('https://api.example.com/v1/models'), 'https://api.example.com/v1/models');
+  assert.equal(buildModelsUrl('https://api.example.com/v1/chat/completions'), 'https://api.example.com/v1/models');
+  assert.equal(buildModelsUrl('https://api.example.com/v1/images/generations'), 'https://api.example.com/v1/models');
+
+  assert.deepEqual(parseModelList({
+    data: [
+      { id: 'gpt-4.1-mini' },
+      { name: 'qwen-vl-max' },
+      'gpt-image-1',
+      { model: 'nano-banana-2' },
+      { id: 'gpt-4.1-mini' }
+    ]
+  }), ['gpt-4.1-mini', 'gpt-image-1', 'nano-banana-2', 'qwen-vl-max']);
+});
+
+test('model discovery auth modes', () => {
+  const base = { baseUrl: 'https://api.example.com/v1', apiKey: 'KEY' };
+
+  assert.deepEqual(buildModelDiscoveryRequest(base), {
+    url: 'https://api.example.com/v1/models',
+    headers: { Accept: 'application/json', Authorization: 'Bearer KEY' }
+  });
+
+  assert.deepEqual(buildModelDiscoveryRequest({
+    ...base,
+    custom: { authType: 'x-api-key' }
+  }), {
+    url: 'https://api.example.com/v1/models',
+    headers: { Accept: 'application/json', 'x-api-key': 'KEY' }
+  });
+
+  assert.deepEqual(buildModelDiscoveryRequest({
+    ...base,
+    custom: { authType: 'query-key', queryKeyName: 'token' }
+  }), {
+    url: 'https://api.example.com/v1/models?token=KEY',
+    headers: { Accept: 'application/json' }
+  });
+
+  assert.deepEqual(buildModelDiscoveryRequest({
+    ...base,
+    custom: { authType: 'custom-header', customHeaderName: 'X-Model-Key' }
+  }), {
+    url: 'https://api.example.com/v1/models',
+    headers: { Accept: 'application/json', 'X-Model-Key': 'KEY' }
+  });
+
+  assert.deepEqual(buildModelDiscoveryRequest({
+    ...base,
+    custom: { authType: 'none' }
+  }), {
+    url: 'https://api.example.com/v1/models',
+    headers: { Accept: 'application/json' }
+  });
 });
 
 function idsFromHtml(rel) {

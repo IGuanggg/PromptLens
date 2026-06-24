@@ -1166,6 +1166,14 @@ function updateBadge(el, status, text) { el.className = `status-badge ${status}`
 
 function renderResults() {
   $('resultsGrid').innerHTML = '';
+  if (!state.results.length) {
+    $('resultsGrid').innerHTML = `
+      <div class="result-empty-state">
+        <strong>等待生成结果</strong>
+        <span>完成 Prompt 后点击“生成图片”，结果会在这里展示并支持下载。</span>
+      </div>`;
+    return;
+  }
   state.results.forEach((image, index) => {
     const card = document.createElement('article');
     card.className = `result-card${image.failed ? ' failed' : ''}`;

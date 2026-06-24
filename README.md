@@ -1,145 +1,271 @@
 # PromptLens
 
 <p align="center">
-  <img src="docs/assets/preview.png" alt="PromptLens preview" width="70%" />
+  <img src="docs/assets/preview.png" alt="PromptLens preview" width="72%" />
 </p>
 
-PromptLens 是一个 Chrome / Edge Manifest V3 浏览器插件，用于把网页图片反推成结构化 AI 绘图提示词，并在同一侧边栏中继续完成图片生成、多角度参考图生成、历史管理和接口调试。
+PromptLens 是一个 Chrome / Edge Manifest V3 浏览器插件，用来把网页图片变成可编辑、可复用、可继续出图的 AI 绘图 Prompt。
+
+它适合这样的工作流：看到一张图，右键发送到侧边栏，反推中文/英文提示词，继续优化，直接生成新图，必要时再生成多角度参考图。像给浏览器装了一枚小镜头，看到灵感就能顺手拆解。
 
 [GitHub 仓库](https://github.com/IGuanggg/PromptLens)
 
+## 现在的重点
+
+PromptLens 不是一个只会“识图写一句话”的小工具。它更像一个轻量的图片创作工作台：
+
+- 图片输入：支持右键网页图片、上传图片、粘贴图片、拖拽图片。
+- Prompt 反推：输出中文 Prompt、英文 Prompt 和 tags，支持额外要求与自定义补充提示词。
+- Prompt 优化：中文/英文 Prompt 可继续二次优化。
+- 图片生成：基于反推结果调用 Image API 出图。
+- 多角度生成：围绕同一主体生成参考角度、侧面、背面、顶面视角。
+- 历史管理：保存图片、Prompt、生成结果，支持搜索、恢复、删除、导入、导出。
+- 调试日志：记录最近调用、请求尺寸、Provider payload、错误原因，排查接口问题更直接。
+- 模型获取：填写 Base URL 和 API Key 后，可尝试读取 `/v1/models`，从列表中选择模型；失败时仍可手动填写。
+
+## 本次更新
+
+### 更清楚的创作工作流
+
+Side Panel 被整理成三个步骤：
+
+1. 图片输入
+2. Prompt 编辑
+3. 图片生成
+
+每个区域只突出当前最重要的动作。反推、生成图片、多角度生成、历史、调试都还在原来的逻辑里，但界面层级更清楚，第一次使用时不用在一堆按钮里找方向。
+
+### 设置页更像真正的控制台
+
+Options 设置页现在把 Prompt API 和 Image API 分成“基础配置”和“高级配置”：
+
+- 基础配置：接口类型、Base URL、API Key、Model、获取模型、测试按钮。
+- 高级配置：Endpoint、Request Template、Response Map、日志控制、Size Format 等。
+
+常用项更靠前，高级项不消失，只是不再一上来把页面撑成一张配置说明书。
+
+### 自动获取模型
+
+Prompt API 和 Image API 都支持模型发现：
+
+- 自动从 Base URL 推导 `/v1/models`。
+- 支持 OpenAI-compatible 常见返回结构：`data`、`models`、`result.data`、`response.data`。
+- 支持 Bearer、`x-api-key`、query key、自定义 header、无鉴权等方式。
+- 发现到的模型只用于选择，最终仍保存到原有的 `promptApi.model` / `imageApi.model` 字段。
+
+如果你的接口不支持 `/v1/models`，不会影响使用。手动填写模型仍然是兜底路径。
+
+### 响应式布局优化
+
+这次重点优化了窗口缩放时的稳定性：
+
+- Side Panel 在 300px、320px、375px、420px、560px、760px 等宽度下更稳。
+- Header、状态条、按钮组在窄宽下分层排列，减少挤压和横向滚动。
+- Options 页在 375px、620px、820px、1024px、1160px 等宽度下更自然。
+- 历史弹窗和调试抽屉的搜索、过滤器、日志行在窄屏下不会硬撑容器。
+
+换句话说，它现在更像一个能住在浏览器侧边栏里的工具，而不是被塞进侧边栏的网页。
+
 ## 核心功能
 
-- **网页图片一键反推**：在网页图片上右键即可发送到插件侧边栏，自动展示图片并调用 Vision / Prompt API 生成中文 Prompt、英文 Prompt 和 tags。
-- **提示词编辑与优化**：保留内置反推模板，支持额外要求、自定义补充提示词，以及中文 / 英文提示词二次优化。
-- **图片生成闭环**：基于反推结果继续调用 Image API 出图，支持单张下载、批量下载、输出比例和分辨率配置。
-- **多角度参考图生成**：围绕同一主体生成参考角度、侧面、背面和顶面视角，适合角色设定、产品参考和素材拆解。
-- **历史与草稿恢复**：自动保存本地草稿，支持历史记录恢复、搜索、删除、导出和导入，方便反复对比不同提示词和结果。
-- **接口状态与调试**：顶部显示 Prompt API / Image API 连接状态，内置调试日志、最近一次 API 调用、错误卡片和失败原因提示。
-- **灵活 Provider 配置**：支持 OpenAI-compatible 接口和 DIY Custom API，可配置请求模板、响应映射、鉴权方式、尺寸格式和 Mock fallback。
+### 图片转 Prompt
 
-## 技术栈
+- 右键网页图片发送到 PromptLens。
+- 支持上传、粘贴、拖拽图片。
+- 自动生成中文 Prompt、英文 Prompt 和 tags。
+- 支持额外要求，例如“更偏电商详情页”“加强材质”“输出适合角色设定的描述”。
 
-- Chrome Manifest V3
-- 原生 HTML / CSS / JavaScript
-- 不依赖 React、Vite、Webpack
-- 使用 `chrome.storage.local` 保存设置、草稿和历史
-- 使用 `chrome.contextMenus` 处理图片右键菜单
-- 使用 `chrome.downloads` 下载生成结果
+### Prompt 编辑与优化
 
-## 已支持的接口
+- 中文/英文 Prompt 都可以手动编辑。
+- 支持中文 Prompt 优化和英文 Prompt 优化。
+- 支持生成前 Prompt 净化，降低因高风险表达触发接口审核的概率。
+- 原始文本框内容不会被净化逻辑直接改写，净化只影响实际请求。
+
+### 图片生成
+
+- 支持 OpenAI-compatible Image API。
+- 支持 Custom Image API request template。
+- 支持单张下载和批量下载。
+- 支持错误卡片展示，生成失败时可以直接复制错误日志或打开调试面板。
+
+### 多角度参考图
+
+多角度生成会围绕同一个主体生成：
+
+- 参考角度
+- 侧面视角
+- 背面视角
+- 顶面视角
+
+适合角色设定、产品参考、素材拆解、建模参考等场景。
+
+### 输出尺寸
+
+清晰度已经升级为 1K / 2K / 4K，并支持 5 种常见比例：
+
+| 预设 | 1:1 | 16:9 | 9:16 | 4:3 | 3:4 |
+| --- | --- | --- | --- | --- | --- |
+| 1K / 标准 | 1080 x 1080 | 1920 x 1080 | 1080 x 1920 | 1440 x 1080 | 1080 x 1440 |
+| 2K / 高清 | 1440 x 1440 | 2560 x 1440 | 1440 x 2560 | 1920 x 1440 | 1440 x 1920 |
+| 4K / 超清 | 2160 x 2160 | 3840 x 2160 | 2160 x 3840 | 2880 x 2160 | 2160 x 2880 |
+
+如果当前 Provider 只支持固定尺寸，Adapter 层会映射到兼容尺寸，并在调试日志里记录 `IMAGE_SIZE_MAPPED`。
+
+### 历史与草稿
+
+- 自动保存本地草稿。
+- 历史记录支持搜索、筛选、恢复、删除、导入、导出。
+- 生成结果可以随历史一起恢复。
+- 历史导出不会包含 API Key。
+
+### 调试面板
+
+内置调试抽屉可以查看：
+
+- 最近一次 API 调用
+- 请求 / 响应日志
+- Provider、Endpoint、HTTP 状态码和耗时
+- requestedSize 与 providerSize
+- 错误码、错误消息、是否可重试
+
+敏感信息会做脱敏处理，例如 API Key、Authorization header、Base64 图片数据。
+
+## 支持的接口
 
 ### Prompt / Vision
 
 - OpenAI-compatible Chat / Vision
-- DIY Custom Prompt API
+- Custom Prompt API
 - Mock fallback
 
 ### Image Generation
 
 - OpenAI-compatible Image API
-- DIY Custom Image API
-- Mock fallback，未配置真实 API 时仍可生成 4 张占位图跑通流程
+- Custom Image API
+- Mock fallback
+
+Custom Image API 模板变量支持：
+
+```text
+{{model}}
+{{prompt}}
+{{width}}
+{{height}}
+{{size}}
+{{dashscopeSize}}
+{{aspectRatio}}
+{{resolutionPreset}}
+{{sizeMode}}
+```
+
+OpenAI 风格：
+
+```json
+{
+  "model": "{{model}}",
+  "prompt": "{{prompt}}",
+  "size": "{{size}}"
+}
+```
+
+DashScope 风格：
+
+```json
+{
+  "model": "{{model}}",
+  "prompt": "{{prompt}}",
+  "size": "{{dashscopeSize}}"
+}
+```
 
 ## 安装方式
 
-1. 打开 Chrome 或 Edge
-2. 进入 `chrome://extensions`
-3. 打开「开发者模式」
-4. 点击「加载已解压的扩展程序」
-5. 选择项目里的 `extension/` 目录
-6. 在网页图片上右键，选择「图片转提示词」
+1. 下载或克隆仓库。
+2. 打开 Chrome 或 Edge。
+3. 进入 `chrome://extensions`。
+4. 打开“开发者模式”。
+5. 点击“加载已解压的扩展程序”。
+6. 选择项目中的 `extension/` 目录。
+7. 在网页图片上右键，选择“图片转提示词”。
 
-## 使用流程
+## 基本使用
 
-1. 右键网页图片，选择「图片转提示词」
-2. 在 PromptLens 窗口中确认图片预览
-3. 可选填写「额外要求」
-4. 点击「反推」
-5. 查看并编辑中文 Prompt、英文 Prompt 和 tags
-6. 点击「生成图片」或「生成多角度」
-7. 下载单张结果或下载全部结果
-8. 可在「历史」中恢复之前的图片、Prompt 和生成结果
+1. 在网页图片上右键发送到 PromptLens，或手动上传 / 粘贴图片。
+2. 在侧边栏确认图片预览。
+3. 可选填写“额外要求”。
+4. 点击“反推”。
+5. 编辑中文 Prompt、英文 Prompt 或 tags。
+6. 点击“生成图片”或“生成多角度”。
+7. 下载结果，或保存到历史中继续对比。
 
-## 设置说明
+## 设置建议
 
 ### Prompt API
 
-在设置页填写：
+建议使用支持视觉输入的模型。只支持纯文本的模型无法真正理解图片内容。
+
+常用配置：
 
 - Base URL
-- Endpoint
 - API Key
 - Model
+- Endpoint
 - Temperature
 - Max Tokens
 - 自定义补充提示词
 
-「自定义补充提示词」不会替换内置反推模板，只会追加到内置模板后面，适合放长期偏好，例如：
-
-```text
-强化主体、场景、构图、镜头、光影、色彩、材质和细节描述。
-输出更适合 AI 绘图模型使用的完整文生图 Prompt。
-避免出现品牌名、水印、版权角色名称。
-```
-
 ### Image API
 
-在设置页填写：
+常用配置：
 
 - Base URL
-- Endpoint
 - API Key
 - Model
 - Response Format
+- Size Format
 - 输出尺寸模式
 
-输出尺寸模式：
+如果接口支持 `/v1/models`，可以先点“获取模型”。如果不支持，直接手动填写模型名即可。
 
-- 跟随参考图：根据参考图横竖自动选择 `16:9`、`9:16` 或 `1:1`
-- 比例预设：手动选择 `1:1`、`4:3`、`3:4`、`16:9`、`9:16`
-- 自定义尺寸：手动输入宽高
+## 本地存储与隐私
 
-## 历史与本地存储
+PromptLens 不做账号系统，不做云同步，主要数据保存在本机浏览器里。
 
-插件只使用本地存储，不做账号系统和云同步。
-
-使用的主要 storage key：
+主要 storage key：
 
 - `settings`：插件设置
 - `pendingImage`：右键图片后的待处理图片
 - `promptpilotDraft`：当前工作草稿
 - `promptpilotHistory`：历史记录
+- `promptpilotLogs`：调试日志
 
-历史记录支持：
+这些旧 key 会继续保留，用来兼容 PromptPilot 时期的用户数据，避免升级后丢配置、丢草稿、丢历史。
 
-- 保存反推过的图片和 Prompt
-- 保存生成结果
-- 搜索和筛选
-- 恢复到当前工作区
-- 删除单条历史
-- 清空历史
-- 导出 / 导入 JSON
+## 开发与验证
 
-## 调试
+项目使用原生 HTML / CSS / JavaScript，不依赖 React、Vite 或 Webpack。
 
-插件内置调试面板，可以查看：
+发布前建议运行：
 
-- 最近一次 API 调用
-- 当前状态摘要
-- 请求 / 响应日志
-- 错误信息
-- Provider、Endpoint、耗时、HTTP 状态码
+```bash
+node scripts/verify.mjs
+git diff --check
+```
 
-敏感信息会脱敏：
+`scripts/verify.mjs` 会检查：
 
-- API Key 只显示前 4 位和后 4 位
-- Authorization header 会被隐藏
-- Base64 图片数据会被截断
+- JavaScript 语法
+- manifest JSON
+- 输出尺寸预设
+- OpenAI-compatible 尺寸映射
+- Custom Image API 模板变量和鉴权
+- Image API 测试路由
+- 模型发现 URL 和响应解析
+- Options / Side Panel DOM id 与 JS 绑定
+- HTML 常见损坏标记
 
-**发布前检查**：运行 `node scripts/verify.mjs`，覆盖语法、manifest、尺寸矩阵、payload、认证、DOM id。任一失败不要发布。
-
-## 目录结构
+## 项目结构
 
 ```text
 PromptLens/
@@ -148,145 +274,70 @@ PromptLens/
 │  ├─ manifest.json
 │  ├─ assets/
 │  └─ src/
-│     ├─ background.js
-│     ├─ contentScript.js
-│     ├─ constants.js
 │     ├─ adapters/
 │     ├─ data/
 │     ├─ options/
 │     ├─ services/
 │     ├─ sidepanel/
+│     ├─ storage/
 │     └─ utils/
+├─ scripts/
+├─ AUDIT.md
+├─ ARCHITECTURE_REVIEW.md
 └─ README.md
 ```
 
 ## 更新日志
-### v0.4.2 — 发布验证脚本 & 请求构造解耦 (2026-05)
 
-**发布前验证：**
-- 新增 `scripts/verify.mjs`，一键检查 JS 语法、manifest、尺寸矩阵、Provider payload、认证方式、DOM id 和 HTML 损坏标记。
-- README 增加发布前检查说明：运行 `node scripts/verify.mjs`，任一检查失败不要发布。
+### v0.5.0 - 模型获取、工作流 UI 与响应式布局
 
-**请求构造解耦：**
-- 新增 `imageRequestBuilder.js`，将 Custom Image API 请求构造从 `imageService.js` 抽离。
-- Options 测试按钮与正式 custom image 生成复用同一套 request builder，降低测试路径和正式路径不一致的风险。
-- 保持默认 Grsai、OpenAI-compatible、自定义 requestTemplate 三类 Image API 路由规则不变。
+- Prompt API / Image API 新增“获取模型”能力，可从 Base URL 自动推导 `/v1/models`。
+- 模型发现支持多种 OpenAI-compatible 返回结构，失败时不阻塞手动填写。
+- Options 页重排为基础配置和高级配置，减少配置噪音。
+- Side Panel 重排为图片输入、Prompt 编辑、图片生成三个步骤。
+- Header 状态条更紧凑，Prompt API / Image API / 最近调用状态更清楚。
+- 响应式布局增强，侧边栏窄宽、普通宽度、宽屏下都更稳定。
+- 历史弹窗、调试抽屉、按钮组、模型选择区域优化窄屏表现。
+- 发布校验脚本增加模型发现、DOM 绑定、HTML 损坏标记等检查。
+- `.claude/` 加入忽略列表，避免本地 Claude 环境文件进入仓库。
 
-**架构审查：**
-- 新增 `ARCHITECTURE_REVIEW.md`，记录模块分层、生成数据流、Provider 路由、旧 storage key 保留原因和后续拆分建议。
-- 清理调试 console 中残留的 `[PromptPilot]` 前缀为 `[PromptLens]`，storage key 保持不变以兼容旧用户数据。
+### v0.4.2 - 发布验证脚本与请求构造解耦
 
-### v0.4.1 — 设置页稳定性 & Image API 测试修复 (2026-05)
+- 新增 `scripts/verify.mjs`，统一检查语法、manifest、尺寸矩阵、Provider payload、认证方式、DOM id 和 HTML 状态。
+- Custom Image API 测试与正式生成复用同一套 request builder，减少测试路径和正式路径不一致的风险。
+- 新增 `ARCHITECTURE_REVIEW.md`，记录模块分层、生成数据流、Provider 路由和后续拆分建议。
 
-**设置页稳定性：**
-- 修复 Options 页面尺寸控件初始化结构，避免脚本中断导致标签页、保存设置、测试按钮无法点击。
-- 设置页表单先恢复用户配置，再绑定自定义字段和尺寸控件，确保新环境与已有配置都能正常显示。
-- 调整 Endpoint 配置区结构，避免嵌套 label 影响表单交互。
+### v0.4.1 - 设置页稳定性与 Image API 测试修复
 
-**Image API 测试修复：**
-- 测试 Image API 时按 provider 类型优先路由：Grsai 内置模型走 v2 payload，OpenAI-compatible 始终走 OpenAI-compatible payload，自定义模型走 requestTemplate。
-- 新增共享的 Grsai v2 payload 构造逻辑，减少测试请求与正式生成请求不一致的问题。
-- 自定义 Image API 测试支持 `{{width}}`、`{{height}}`、`{{size}}`、`{{dashscopeSize}}`、`{{aspectRatio}}`、`{{resolutionPreset}}`、`{{sizeMode}}` 等模板变量。
-- 修复 Custom Image API 使用 `query-key` 认证时 URL 未追加 API Key 的问题。
+- 修复 Options 页面尺寸控件初始化问题，避免脚本中断导致 tabs、保存设置、测试按钮不可点击。
+- 测试 Image API 时按 Provider 类型正确路由。
+- Custom Image API 测试支持 `{{width}}`、`{{height}}`、`{{size}}`、`{{dashscopeSize}}` 等模板变量。
+- 保留 `IMAGE_PAYLOAD_SIZE` / `IMAGE_SIZE_MAPPED` 日志，方便确认 requestedSize 与 providerSize。
 
-**尺寸与日志：**
-- 输出尺寸提示支持 OpenAI mapped 兼容尺寸提示。
-- 保留 `IMAGE_PAYLOAD_SIZE` / `IMAGE_SIZE_MAPPED` 日志，便于确认 requestedSize 与 providerSize。
+### v0.4.0 - API v2、图片持久化与超时优化
 
-### v0.4.0 — API v2 升级 & 存储修复 & 超时优化 (2026-05)
+- 适配新版图像生成接口和结果轮询方式。
+- 增加 IndexedDB 图片 Blob 存储、缩略图生成、历史图片迁移和孤儿 Blob 清理。
+- 优化提交请求和轮询请求超时，适配更慢的真实出图任务。
 
-**Grsai API v2 升级：**
-- 双通道统一端点：`/v1/draw/completions` + `/v1/draw/nano-banana` → `POST /v1/api/generate`
-- 结果轮询升级：`POST /v1/draw/result` → `GET /v1/api/result?id={taskId}`
-- 载荷字段适配：`urls` → `images`，新增 `replyType: "json"`，移除 `webHook`/`shutProgress`/`quality`
-- gpt-image-2 通道 `aspectRatio` 改为尺寸格式（如 `"1920x1080"`），nano-banana 保持比例格式
-- 同步结果快速返回：API 直接返回 `status: "succeeded"` 时跳过轮询
+### v0.3.x - 项目更名为 PromptLens
 
-**超时优化：**
-- 提交请求超时：60s → 300s（5 分钟），解决后台出图成功但客户端超时断开的问题
-- 轮询单次请求超时：30s → 120s（2 分钟），总轮询预算 240 次 × 3s ≈ 12 分钟
+- 插件显示名、侧边栏标题、设置页标题、文档和仓库名统一为 PromptLens。
+- 保留旧 storage key，兼容 PromptPilot 时期的用户数据。
+- 增加右键发送通知、粘贴诊断、图片持久化能力。
 
-**IndexedDB 存储修复：**
-- **缩略图自动生成**：源图保存到 IndexedDB 后自动创建 256px WebP 缩略图，修复历史缩略图为空的问题
-- **Blob 孤儿清理**：新增 `collectReferencedBlobIds()` 扫描全部历史引用，`scheduleBlobCleanup()` 在历史变更后自动清理孤儿 blob
-- **历史迁移**：新增 `migrateHistoryImagesToBlobStore()` 懒迁移，将旧历史条目中的 base64 dataUrl 转存到 IndexedDB 并释放 storage 配额
-- **CORS 诊断**：远程图片 fetch 失败时记录 `BLOB_PERSIST_FETCH_FAILED` 调试日志
+### v0.2.0 - 双通道生成与模型能力系统
 
-**其他修复：**
-- 修复设置页 `updateResolutionDescription` 函数未定义导致清晰度描述不更新
-- 为 `openDockedPanel` 的 300ms 延迟增加文档注释说明 runtime message 竞态与 storage fallback
-### v0.3.0 - 项目更名为 PromptLens (2026-05)
+- 增加 Image / Nano Banana 双通道图像生成架构。
+- 设置页增加模型能力卡片。
+- 增加 Prompt 净化开关，降低高风险表达导致的生成失败概率。
 
-- 项目与 GitHub 仓库统一更名为 **PromptLens**，仓库地址更新为 `https://github.com/IGuanggg/PromptLens`。
-- 浏览器插件显示名、侧边栏标题、设置页标题、文档标题和导出文件名前缀统一切换到 PromptLens / promptlens。
-- README、AUDIT、CLAUDE 和 docs 文档同步更新品牌名与项目目录名。
-- 保留 `promptpilotDraft`、`promptpilotHistory`、`promptpilotLogs` 等本地 storage key，避免旧用户配置、草稿和历史记录丢失。
-- 保留旧版 PromptPilot 历史导出文件导入兼容，方便从旧版本平滑迁移。
-### v0.3.1 — 通知提醒 & 图片持久化 & 粘贴修复 (2026-05)
+### v0.1.x - MVP 与尺寸系统升级
 
-**右键发送通知：**
-- 右键"图片转提示词"成功后显示系统通知："已发送到 PromptLens"
-- 发送失败时显示系统通知："发送失败"
-- Side Panel 内 Toast 提示"图片已从右键菜单接收"（覆盖 Side Panel 已打开 / 冷启动两种场景）
-- 通知节流防止短时间连续右键导致刷屏
+- 完成右键图片到 Side Panel、Prompt 反推、图片生成、多角度生成、历史记录、调试日志的基础闭环。
+- 输出尺寸从 720p / 1080p 升级为 1K / 2K / 4K。
+- 多角度生成统一使用 `getOutputSize()`，避免固定回退到 1:1。
 
-**IndexedDB 图片持久化：**
-- 新增 `storage/imageBlobStore.js` — 基于 IndexedDB 的图片 Blob 存储（`saveImageBlob` / `getImageBlob` / `deleteImageBlob` / `cleanupBlobs`）
-- 新增 `utils/imageThumbnail.js` — Canvas 缩略图生成器（WebP 格式）
-- 上传/粘贴/右键图片自动后台保存至 IndexedDB，不阻塞主流程
-- 生成结果图立即抓取并保存 Blob，解决远程 URL 2 小时过期问题
-- 历史记录缩略图 5 级加载链：缩略图 blob → 源图 blob → 结果 blob → 远程 URL 回退 → "图片缓存丢失"占位符
+## 许可
 
-**粘贴修复：**
-- 粘贴按钮和 Ctrl+V 均增加诊断日志（`[PromptLens][CLICK] pasteBtn`、`[PromptLens][PASTE_EVENT]`）
-- 异步剪贴板 API 失败时自动提示使用 Ctrl+V
-
-### v0.2.0 — 双通道生图 & 模型能力系统 (2026-05)
-
-**新增双通道图像生成架构：**
-
-- **Image 通道**（gpt-image-2 / gpt-image-2-vip）：`POST /v1/draw/completions`，使用 `aspectRatio` + `quality`
-- **Nano Banana 通道**（nano-banana-pro / nano-banana-2 / nano-banana-fast）：`POST /v1/draw/nano-banana`，使用 `aspectRatio` + `imageSize`
-- 两个通道统一通过 `POST /v1/draw/result` 异步轮询获取结果
-
-**模型能力系统：**
-- 设置页新增模型能力卡片：展示接口组、积分消耗、提交/结果接口、支持尺寸、能力标签
-- 清晰度下拉根据所选模型自动过滤（nano-banana-fast / gpt-image-2 仅支持 1K）
-- Endpoint 根据模型自动切换，默认只读，可手动覆盖
-
-**内容审核处理：**
-- `output_moderation` → `IMAGE_MODERATION_FAILED`（图片生成被安全审核拦截）
-- `input_moderation` → `IMAGE_INPUT_MODERATION_FAILED`（提示词触发输入审核）
-- **生成前 Prompt 净化开关**：可在 Prompt API 设置中开启或关闭（默认开启）。开启后，插件在提交生图接口前自动弱化或移除高风险表达（如"完全复刻""同款""in the style of""exact copy"等），以降低 `input_moderation` / `output_moderation` 概率。原始 Prompt 文本框内容不会被修改，仅影响实际请求
-
-**Bug 修复：**
-- 修复 AbortError 被误判为 `code: 20` 的问题
-- 修复 JSON 响应被误当成 SSE 流解析
-- 修复 Nano Banana `aspectRatio` / `imageSize` 为空的问题
-- 修复"跟随参考图"模式对竖图的检测（9:16 不再被映射为 1:1 或 1:2）
-- 修复 `webhook` 字段名大小写错误 → 统一为 `webHook: "-1"`
-- 新增重复点击保护锁，防止一次点击触发多次生成
-
-### v0.1.1 — 尺寸系统升级 (2026-04)
-
-- 清晰度从 720p / 1080p 升级为 **1K / 2K / 4K**，覆盖 5 种比例共 15 个尺寸组合
-- 新增 `detectStandardRatio`：跟随参考图模式映射到 5 个标准比例（1:1 / 16:9 / 9:16 / 4:3 / 3:4）
-- Options 与 Side Panel 共享 `currentImageMeta`，统一尺寸计算
-- 多角度生成使用统一 `getOutputSize()`
-- 旧字段 `p720` / `p1080` / `quality` / `selectedRatio` 自动迁移
-
-### v0.1.0 — MVP 首发 (2026-04)
-
-- 右键图片 → Side Panel → Prompt 反推 → 生成图片闭环
-- 支持上传、粘贴、拖拽图片，blob/防盗链自动转 dataURL
-- Image API 生成：单图 + 多角度（参考/侧面/背面/顶面）
-- 调试日志：API 请求/响应脱敏记录，尺寸映射日志
-- 历史记录、草稿恢复、JSON 导出/导入
-- 深色科技风 UI，青绿色主色调
-
-## 隐私说明
-
-- 插件不上传设置到云端
-- 历史记录默认保存在本机浏览器 `chrome.storage.local`
-- 导出历史不会包含 API Key
-- 真实 API 请求只会发送到用户在设置页配置的接口地址
+当前仓库未声明开源许可证。使用、分发或二次开发前，请先确认作者授权。

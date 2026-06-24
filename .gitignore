@@ -13,6 +13,7 @@ Thumbs.db
 # Local editor files
 .vscode/
 .idea/
+.claude/
 
 # Temporary files
 *.tmp

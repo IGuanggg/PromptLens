@@ -23,11 +23,15 @@
 
 * { box-sizing: border-box; }
 
-html { background: var(--bg); }
+html {
+  overflow-x: hidden;
+  background: var(--bg);
+}
 
 body {
   margin: 0;
   min-height: 100vh;
+  overflow-x: hidden;
   background:
     linear-gradient(180deg, #0d1117 0%, #090b0f 56%, #0b0d10 100%);
   color: var(--text);
@@ -39,6 +43,7 @@ button,
 input,
 select,
 textarea {
+  min-width: 0;
   font: inherit;
 }
 
@@ -52,8 +57,9 @@ textarea:focus-visible {
 
 .settings-shell {
   width: min(1160px, 100%);
+  min-width: 0;
   margin: 0 auto;
-  padding: 18px;
+  padding: 20px;
 }
 
 .settings-header {
@@ -80,8 +86,8 @@ p {
 
 .settings-layout {
   display: grid;
-  grid-template-columns: 190px minmax(0, 1fr);
-  gap: 14px;
+  grid-template-columns: 184px minmax(0, 1fr);
+  gap: 16px;
   align-items: start;
 }
 
@@ -90,6 +96,7 @@ p {
   top: 14px;
   display: grid;
   gap: 6px;
+  min-width: 0;
   padding: 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -98,6 +105,7 @@ p {
 }
 
 .tab {
+  min-width: 0;
   min-height: 36px;
   border: 1px solid transparent;
   border-radius: var(--radius);
@@ -106,6 +114,8 @@ p {
   padding: 8px 10px;
   cursor: pointer;
   text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 13px;
   font-weight: 720;
   transition: border-color .15s ease, background .15s ease, color .15s ease;
@@ -120,7 +130,8 @@ p {
 
 .panel {
   min-width: 0;
-  padding: 16px;
+  overflow-x: hidden;
+  padding: 18px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: rgba(17, 22, 29, .94);
@@ -130,7 +141,7 @@ p {
 .hidden { display: none; }
 
 h2 {
-  margin: 0 0 16px;
+  margin: 0 0 18px;
   font-size: 18px;
   line-height: 1.25;
 }
@@ -142,10 +153,91 @@ h3 {
   line-height: 1.3;
 }
 
+.settings-group,
+.advanced-section {
+  margin-bottom: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, .025);
+}
+
+.settings-group {
+  padding: 16px;
+}
+
+.primary-group {
+  border-color: rgba(73, 214, 179, .2);
+  background: rgba(73, 214, 179, .045);
+}
+
+.group-heading {
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(231, 238, 247, .08);
+}
+
+.group-heading h3 {
+  margin: 0 0 4px;
+  color: var(--text);
+}
+
+.group-heading p {
+  font-size: 12px;
+}
+
+.settings-group > .form-grid .model-field {
+  grid-column: 1 / -1;
+}
+
+.advanced-section {
+  overflow: hidden;
+}
+
+.advanced-section summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 780;
+  list-style: none;
+}
+
+.advanced-section summary::-webkit-details-marker {
+  display: none;
+}
+
+.advanced-section summary::after {
+  content: "+";
+  margin-left: auto;
+  color: var(--primary);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.advanced-section[open] summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.advanced-section[open] summary::after {
+  content: "-";
+}
+
+.advanced-content {
+  padding: 14px;
+}
+
+.advanced-content > h3:first-child,
+.advanced-content > label:first-child {
+  margin-top: 0;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+  gap: 12px 14px;
 }
 
 .endpoint-block {
@@ -164,7 +256,7 @@ label {
 label {
   display: grid;
   gap: 7px;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 
 input,
@@ -176,6 +268,7 @@ textarea {
   border-radius: var(--radius);
   background: rgba(0, 0, 0, .22);
   color: var(--text);
+  min-height: 38px;
   padding: 9px 10px;
   outline: none;
 }
@@ -220,6 +313,7 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  min-width: 0;
   gap: 8px;
   margin-top: 14px;
   padding: 10px;
@@ -236,12 +330,36 @@ textarea {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  margin-top: 14px;
+  margin-top: 16px;
 }
+
+.model-field {
+  align-content: start;
+}
+
+.model-discovery-row {
+  display: grid;
+  grid-template-columns: minmax(104px, auto) minmax(0, 1fr);
+  align-items: stretch;
+  gap: 8px;
+}
+
+.model-picker {
+  min-width: 0;
+}
+
+.model-discovery-status {
+  min-height: 18px;
+}
+
+.model-discovery-status.success { color: var(--primary); }
+.model-discovery-status.error { color: var(--danger); }
+.model-discovery-status.warn { color: var(--warning); }
 
 .primary-btn,
 .secondary-btn {
-  min-height: 34px;
+  min-width: 0;
+  min-height: 38px;
   border-radius: var(--radius);
   padding: 8px 12px;
   cursor: pointer;
@@ -272,6 +390,8 @@ textarea {
 }
 
 #saveStatus {
+  min-width: 0;
+  overflow-wrap: anywhere;
   color: var(--muted);
   font-size: 13px;
 }
@@ -286,8 +406,8 @@ textarea {
 }
 
 .custom-fields {
-  margin-top: 12px;
-  padding: 12px;
+  margin-top: 14px;
+  padding: 14px;
 }
 
 .test-result {
@@ -311,8 +431,8 @@ textarea {
 .muted { color: var(--faint); }
 
 .hint-text {
-  margin: 8px 0 12px;
-  padding: 8px 10px;
+  margin: 10px 0 16px;
+  padding: 10px 12px;
   border: 1px solid rgba(240, 198, 108, .24);
   border-radius: var(--radius);
   background: var(--warning-soft);
@@ -322,8 +442,8 @@ textarea {
 }
 
 .size-control {
-  margin-top: 4px;
-  padding: 12px;
+  margin-top: 6px;
+  padding: 14px;
 }
 
 .size-control label { margin-bottom: 10px; }
@@ -447,12 +567,17 @@ textarea {
 
   .tabs {
     position: static;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(112px, 1fr);
+    grid-template-columns: none;
+    overflow-x: auto;
+    scrollbar-width: thin;
   }
 
   .tab {
     text-align: center;
     padding: 8px 6px;
+    white-space: nowrap;
   }
 }
 
@@ -461,8 +586,8 @@ textarea {
   .settings-header,
   .panel { padding: 12px; }
   h1 { font-size: 22px; }
-  .tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .form-grid { grid-template-columns: 1fr; }
+  .model-discovery-row { grid-template-columns: 1fr; }
   .model-capability-card .cap-meta { grid-template-columns: 1fr; }
   .footer-actions { bottom: 8px; }
 }
@@ -480,4 +605,14 @@ textarea {
   .secondary-btn { min-height: 36px; }
   .footer-actions > button { flex: 1 1 calc(50% - 4px); }
   #saveStatus { flex-basis: 100%; }
+}
+
+@media (max-width: 340px) {
+  .settings-shell { padding: 6px; }
+  .settings-header,
+  .panel,
+  .settings-group,
+  .advanced-content,
+  .footer-actions { padding: 8px; }
+  .footer-actions > button { flex-basis: 100%; }
 }
